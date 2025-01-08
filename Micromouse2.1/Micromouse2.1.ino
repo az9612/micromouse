@@ -148,8 +148,8 @@ void loop() {
 
     while (currentCell != targetCells[0] && currentCell != targetCells[1] && currentCell != targetCells[2] && currentCell != targetCells[3]) {
 
-      log("CurrentDir");
-      dlog(currentDir);
+      //log("CurrentDir");
+      //dlog(currentDir);
 
       updateWalls();
       flood();
