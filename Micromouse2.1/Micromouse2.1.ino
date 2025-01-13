@@ -4,11 +4,14 @@
   * http://craga89.github.io/Micromouse/
   * https://www.geeksforgeeks.org/set-clear-and-toggle-a-given-bit-of-a-number-in-c/
 */
+#include "FS.h"
+#include "SD.h"
+#include "SPI.h"
 
 #include "src/CircularBufferQueue/CircularBufferQueue.h"
 #include <EEPROM.h>
 
-
+#define cs 5 
 
 #define I2C_ADDRESS 0x3C
 
@@ -57,6 +60,11 @@
 
 #define threshold 200
 
+double t;
+String valueRow;
+String valueCol;
+String valueT;
+
 int schedule = 0;
 struct cell {
   byte flood;
@@ -104,11 +112,19 @@ byte* values[7] = { &startCell, &(targetCells[0]), &(targetCells[1]), &(targetCe
 
 void setup() {
   Serial.begin(19200);
+
+  if (!SD.begin(cs)) {
+    log("Card Mount Failed");
+    return;
+  }
+  log("SD Card Initialized Successfully!");
+  writeFile(SD, "/test.txt", "Start \n");
   initializeFloodArray();
   resetMazeValuesInEEPROM();
   initializeFloodArray2();
   resetMazeValuesInEEPROM2();
 }
+  
 
 void loop() {
   bool areEqual = true;
@@ -150,7 +166,13 @@ void loop() {
 
       log("CurrentDir");
       dlog(currentDir);
-
+      byte row = delineariseRow(currentCell);
+      byte col = delineariseCol(currentCell);
+      t = millis();
+      valueT = String(t);
+      valueRow = String(row);
+      valueCol = String(col);
+      appendFile(SD, "/test.txt", (valueT + "," + valueRow + "." + valueCol + "\n").c_str());
       updateWalls();
       flood();
       flood2();
