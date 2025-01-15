@@ -72,8 +72,9 @@ public:
     }
 };
 
-#include "ICM_20948.h"
+//#include "ICM_20948.h"
 #include <Adafruit_NeoPixel.h>
+#include <math.h>
 
 // Define the LED strip configuration
 #define LED_PIN    13  // Pin connected to the data input of the LED strip
@@ -91,7 +92,7 @@ public:
 // Create a NeoPixel object
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-ICM_20948_I2C myICM;
+//ICM_20948_I2C myICM;
 
 byte IR_Emit_Left = 25;
 byte IR_Trans_Left = 27;
@@ -142,8 +143,8 @@ unsigned long prevTime;
 float dt;
 unsigned long revTime;
 
-PIDController speedControllerL{5.0, 13.0, 0.05, 15, 255};
-PIDController speedControllerR{5.0, 13.0, 0.05, 15, 255};
+PIDController speedControllerL{1.0, 0.0, 0.5, 40, 255};
+PIDController speedControllerR{1.0, 0.0, 0.5, 40, 255};
 
 
 PIDController wallLeftController{3.0, 3.0, 0.05, 0.0, 1.0};
@@ -190,9 +191,9 @@ void setup()
   prevTime = millis();
   revTime = prevTime;
   start_Time = millis();
-  Serial.begin(9600);
+  Serial.begin(115200);
   //IMU_setup();
-  
+  /*
   if (!SD.begin(cs)) {
     Serial.printf("Card Mount Failed \n");
     return;
@@ -200,8 +201,9 @@ void setup()
     Serial.printf("Card accepted");
   }
   writeFile(SD, "/test.txt", "Start1 \n");
+  */
 }
-
+/*
 void IMU_setup()
 {
   Wire.begin();
@@ -347,7 +349,7 @@ void readIMU(float& x_acc, float& y_acc, float& z_acc, float& x_gyr, float& y_gy
     //delay(500);
   }
 }
-//void readIR(uint16_t& distLeft, uint16_t& distFrontLeft, uint16_t& distFront, uint16_t& distFrontRight, uint16_t& distRight)
+*/
 void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16_t& distFrontRight, double& distRight)
 {
   digitalWrite(IR_Emit_Left, HIGH);
@@ -410,7 +412,9 @@ void rotateRight(float velL, float velR)
   delayMicroseconds(200);
   analogWrite(motorR_in1, velR);
 
-  double gyro = myICM.gyrZ();
+  //double gyro = myICM.gyrZ();
+  double gyro = 0;
+
   angle += gyro*0.005;
   if(angle >= 90)
   {
@@ -428,7 +432,8 @@ void rotateLeft(float velL, float velR)
   delayMicroseconds(200);
   analogWrite(motorR_in2, velR);
 
-  double gyro = myICM.gyrZ();
+  //double gyro = myICM.gyrZ();
+  double gyro = 0;
   angle += gyro*0.005;
   if(angle >= -90)
   {
@@ -477,17 +482,17 @@ void get_AngularVelocities(double& in1, double& in2)
   revTime = timer;
   dtime = dtime/1000; 
   double speed_R, speed_L;
-  uint8_t ticks_per_rot = 150;
+  uint8_t ticks_per_rot = 140;
   double zwischenrechnerL = (double)cnt01_L/(double)ticks_per_rot;
   double zwischenrechnerR = (double)cnt01_R/(double)ticks_per_rot;
   speed_L = zwischenrechnerL / dtime;
   speed_R = zwischenrechnerR / dtime;
   cnt01_L = cnt00_L;
   cnt01_R = cnt00_R;
-  Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
+  //Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
   //Serial.println("Zwischen_L: " + String(zwischenrechnerL) + " Zwischen_R: " + String(zwischenrechnerR));
   //Serial.println("Time: " + String(dtime));
-  Serial.println("Ticks_L: " + String(cnt00_L) + " Ticks_R: " + String(cnt00_R));
+  //Serial.println("Ticks_L: " + String(cnt00_L) + " Ticks_R: " + String(cnt00_R));
   //return zwischenrechnerL, zwischenrechnerR;
   in1 = speed_L;
   in2 = speed_R;
@@ -497,9 +502,9 @@ void get_LinearVelocity(double& speed_L, double& speed_R)
 {
   double omega_L, omega_R ;
   get_AngularVelocities(omega_L, omega_R); 
-  float r = 0.015; 
-  speed_L = r * omega_L; // m/s linear speed
-  speed_R = r * omega_R;
+  float r = 0.019; 
+  speed_L = 2 * M_PI * r * omega_L; // m/s linear speed
+  speed_R = r * 2 * M_PI * omega_R;
   //Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
 }
 
@@ -507,11 +512,11 @@ void get_LinearVelocities(double& speed_L, double& speed_R)
 {
   double omega_L = speed_L;
   double omega_R = speed_R; 
-  float r = 0.015; 
-  speed_L = r * omega_L; // m/s linear speed
-  speed_R = r * omega_R;
+  float r = 0.019; 
+  speed_L = 2*r * M_PI * omega_L; // m/s linear speed
+  speed_R = 2*r * M_PI * omega_R;
   
-  Serial.println("omegaL: " + String(omega_L) + " omegaR: " + String(omega_R));
+  //Serial.println("omegaL: " + String(omega_L) + " omegaR: " + String(omega_R));
   Serial.println("LinSpeedL: " + String(speed_L) + " LinSpeedR: " + String(speed_R));
 }
 
@@ -527,13 +532,12 @@ void scenerioOne() //max possible accel without controller
 
 void scenerioTwo() //max possible accel with controller
 {
-  
   double ang_speedL, ang_speedR, lin_speedL, lin_speedR, speedL, speedR, setSpeed;
-  setSpeed = 0.3;
+  setSpeed = 1.0;
   unsigned long timee = millis();
   
   get_AngularVelocities(speedL, speedR);
-  Serial.println("Angular_L: " + String(speedL));
+  //Serial.println("Angular_L: " + String(speedL));
   ang_speedL = speedL;
   ang_speedR = speedR;
   get_LinearVelocities(speedL, speedR);
@@ -541,8 +545,9 @@ void scenerioTwo() //max possible accel with controller
   lin_speedR = speedR;
   float controlSignal_L = speedControllerL.update(speedL, setSpeed);
   float controlSignal_R = speedControllerR.update(speedR, setSpeed);
-  driveForward(controlSignal_L, controlSignal_R);
-
+  Serial.println("Signal_L: " + String(controlSignal_L)+ " Signal_R: " + String(controlSignal_R));
+  driveForward((int)controlSignal_L, (int)controlSignal_R);
+  //driveForward(40, 40);
   
   //save in sd
   //saveToSD(timee, ang_speedL, ang_speedR, lin_speedL, lin_speedR, controlSignal_L, controlSignal_R);
@@ -603,34 +608,33 @@ void setColor(uint8_t r, uint8_t g, uint8_t b)
 
 void loop() {
 // put your main code here, to run repeatedly:
-
-readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-      Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
-                     " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
-                     " Distance Right: " + String(distRight));
-/*  
+uint32_t ticks = i_R;
+//Serial.println("ticks: "+ ticks);
   if(blinker)
   {
     setColor(0,255,0);
     unsigned long current_Time = millis();
     if(current_Time >= last_Time + 5)
     {
-      myICM.getAGMT();
+      //myICM.getAGMT();
       last_Time = current_Time;
       readIR(distLeft, distFrontLeft, distFront, distFrontRight, distFront);
-      Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
-                     " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
-                     " Distance Right: " + String(distRight));
+      // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
+      //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
+      //                " Distance Right: " + String(distRight));
     }
     //scenerioOne();
     scenerioTwo();
     //scenerioThree();
     //scenerioFour();
-    if(current_Time >= start_Time + 2000)
+    //driveForward(40,40);
+    if(current_Time >= start_Time + 5000)
     {
       setColor(0,0,255);
       blinker = false;
       driveForward(0, 0);
+      delayMicroseconds(100);
+      driveBackward(0, 0);
       delay(3000);
     }
   }
@@ -638,5 +642,4 @@ readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
   {
     setColor(255,0,0);
   }
-  */
 }
