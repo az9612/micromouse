@@ -7,7 +7,7 @@ private:
     float setpoint;        // Desired value
     float processVariable; // Current value
     float error, prevError;
-    float integral, derivative;
+    float proportional, integral, derivative;
     float output;
     
     // Timing for dt calculation
@@ -46,7 +46,7 @@ public:
         prevTime = currentTime;
 
         // Compute PID terms
-        float proportional = Kp * error;
+        proportional = Kp * error;
         integral += Ki * error * dt;
         derivative = Kd * (error - prevError) / dt;
 
@@ -143,7 +143,7 @@ unsigned long prevTime;
 float dt;
 unsigned long revTime;
 
-PIDController speedControllerL{1.0, 0.0, 0.5, 40, 255};
+PIDController speedControllerL{1.0, 0.0, 0.5, 40, 255}; // {Kp, Ki, Kd, outputMin, OutputMax}
 PIDController speedControllerR{1.0, 0.0, 0.5, 40, 255};
 
 
