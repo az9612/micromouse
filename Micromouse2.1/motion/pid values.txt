@@ -1,0 +1,20 @@
+kpl 4.627  600PWM
+kil 1.133
+kdl 0.8146		LEFT
+
+kp 1.108
+ki 0.8704
+KD 0.3527	LEFT overshoot aggressive
+
+KP 1.196
+ki 0.6305
+KD 0.4436	LEFT overdamp 
+
+
+
+#define KP 1.196		left
+#define KI 0.6305
+#define KD 0.4436
+#define KPr 1.688		right
+#define KIr 0.6222
+#define KDr 0.2539		best one
