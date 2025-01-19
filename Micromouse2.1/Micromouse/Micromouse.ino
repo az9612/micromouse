@@ -395,10 +395,10 @@ void driveBackward(float velL, float velR)
 
 void driveForward(float velL, float velR)
 {
-  analogWrite(motorL_in2, 0);
+  digitalWrite(motorL_in2, LOW);
   delayMicroseconds(200);
   analogWrite(motorL_in1, velL);
-  analogWrite(motorR_in2, 0);
+  digitalWrite(motorR_in2, LOW);
   delayMicroseconds(200);
   analogWrite(motorR_in1, velR);
 }
