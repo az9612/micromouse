@@ -24,12 +24,12 @@
 #define CHN_RIGHT2 4
 #define OUTPUT_MIN 0
 #define OUTPUT_MAX 4095
-#define KP 1.196
-#define KI 0.6305
-#define KD 0.4436
-#define KPr 1.688
-#define KIr 0.6222
-#define KDr 0.2539
+#define KP 4.893
+#define KI 0
+#define KD 1.272
+#define KPr 4.893
+#define KIr 0
+#define KDr 1.272
 
 //Button
 bool blinker = false;
@@ -44,7 +44,7 @@ unsigned long lastTime = 0;
 bool loopActive = false;
 
 // Target speed for both motors (pulses per second)
-double targetSpeed = 1000;
+double targetSpeed = 500;
 //double targetSpeedR = 1.05 * targetSpeedL;
 double outputValL, outputValR;
 AutoPID myPIDL(&currentSpeedLeft, &targetSpeed, &outputValL, OUTPUT_MIN, OUTPUT_MAX, KP, KI, KD);
@@ -83,10 +83,16 @@ void setup() {
 }
 
 
-void loop() {
-  // put your main code here, to run repeatedly:
+void loop() 
+{
   if(blinker)
   {
+    unsigned long current_Time = millis();
+    if (current_Time >= start_Time + 5000)
+    {
+      //start_Time = current_Time;
+    
+
     getEncSpeed();
     myPIDL.run();
     myPIDR.run();
@@ -104,6 +110,7 @@ void loop() {
     Serial.print(" | Right PWM Output: ");
     Serial.println(outputValR);
     */
+    }
   }
 }
 
@@ -140,7 +147,7 @@ void getEncSpeed(){
 
 void setMotorSpeed(int pin1, int pin2, double speed) {
   // Ensure speed is within valid range
-   speed = constrain(speed, 450, PWM_MAX);
+   speed = constrain(speed, 650, PWM_MAX);
    // Convert double to uint32_t
    uint32_t dutyCycle = static_cast<uint32_t>(speed);
   

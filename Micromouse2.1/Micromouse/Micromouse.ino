@@ -1,99 +1,34 @@
-class PIDController {
-private:
-    // PID gains
-    float Kp, Ki, Kd;
-    
-    // Internal variables for calculations
-    float setpoint;        // Desired value
-    float processVariable; // Current value
-    float error, prevError;
-    float integral, derivative;
-    float output;
-    
-    // Timing for dt calculation
-    unsigned long prevTime;
-
-    // Output limits
-    float outputMin, outputMax;
-
-public:
-    // Constructor
-    PIDController(float Kp, float Ki, float Kd, float outputMin = 0, float outputMax = 255)
-        : Kp(Kp), Ki(Ki), Kd(Kd), setpoint(0), processVariable(0),
-          error(0), prevError(0), integral(0), derivative(0), output(0),
-          outputMin(outputMin), outputMax(outputMax), prevTime(0) {}
-
-    // Set the desired setpoint
-    void setSetpoint(float sp) {
-        setpoint = sp;
-    }
-
-    // Set output limits
-    void setOutputLimits(float min, float max) {
-        outputMin = min;
-        outputMax = max;
-    }
-
-    // Update the PID controller and calculate the output
-    float update(float processVariable, float sp) {
-        setpoint = sp;
-        this->processVariable = processVariable;
-        error = setpoint - processVariable;
-
-        // Calculate time step (dt)
-        unsigned long currentTime = millis();
-        float dt = (currentTime - prevTime) / 1000.0; // Convert ms to seconds
-        prevTime = currentTime;
-
-        // Compute PID terms
-        float proportional = Kp * error;
-        integral += Ki * error * dt;
-        derivative = Kd * (error - prevError) / dt;
-
-        // Calculate total output
-        output = proportional + integral + derivative;
-
-        // Constrain output to limits
-        if (output > outputMax) {
-            output = outputMax;
-            // Prevent integral windup
-            integral -= Ki * error * dt;
-        }
-        if (output < outputMin) {
-            output = outputMin;
-            // Prevent integral windup
-            integral -= Ki * error * dt;
-        }
-
-        // Save the current error for the next update
-        prevError = error;
-
-        return output;
-    }
-};
-
-//#include "ICM_20948.h"
+#include <ICM_20948.h>
+//#include <>
 #include <Adafruit_NeoPixel.h>
-#include <math.h>
+#include <AutoPID.h>
 
 // Define the LED strip configuration
 #define LED_PIN    13  // Pin connected to the data input of the LED strip
 #define NUM_LEDS   3 // Number of LEDs in the strip
 
-#include "FS.h"
-#include "SD.h"
-#include "SPI.h"
+ICM_20948_I2C myICM;
 
-#define cs 5 
-
-
-#define I2C_ADDRESS 0x3C
+// #define I2C_ADDRESS 0x3C
 
 // Create a NeoPixel object
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
-//ICM_20948_I2C myICM;
+int8_t state = 0; 
 
+// Instantiate Kalman Filters for pitch, roll, and yaw
+//KalmanFilter kalmanYaw;
+
+// IMU data
+double accX, accY, accZ;
+double gyrX, gyrY, gyrZ;
+double magX, magY, magZ;
+double theta_gyr;
+double sx, sy, velX, velY;
+double yawMagnetometer;
+
+
+// Infrared sensors
 byte IR_Emit_Left = 25;
 byte IR_Trans_Left = 27;
 
@@ -109,8 +44,15 @@ byte IR_Trans_FrontRight = 36;
 byte IR_Emit_Right = 32;
 byte IR_Trans_Right = 39;
 
+uint16_t  distFrontLeft, distFrontRight, distL, distR, distF;
+double distRight, distLeft, distFront;
+double target_distLeft = 28;
+double target_distRight = 28; 
+double target_distFront;
+
 byte buttonPin = 12;
 
+// Vehicle control
 byte motorL_in1 = 4;
 byte motorL_in2 = 0;
 byte encPinL = 26;
@@ -119,7 +61,9 @@ byte motorR_in1 = 17;
 byte motorR_in2 = 33;
 byte encPinR = 35;
 
-unsigned long last_Time;
+bool turnright, turnleft = true;
+
+unsigned long last_Time = 0;
 unsigned long start_Time;
 volatile uint32_t i_L;
 volatile uint32_t i_R;
@@ -127,34 +71,86 @@ int64_t cnt00_L;
 int64_t cnt00_R;
 int64_t cnt01_L;
 int64_t cnt01_R;
-int64_t n = pow(2,32)-1;
+int32_t n = pow(2,32)-1;
 
 bool blinker = false;
 
-uint16_t  distFrontLeft, distFrontRight, distL, distR,distF;
-double distRight, distLeft, distFront;
-
-double angle;
-bool turnright;
-bool turnleft;
-
 // Time variables
 unsigned long prevTime;
-float dt;
+double dt;
 unsigned long revTime;
+unsigned long wall_pidTime;
+unsigned long speed_pidTime;
+unsigned long kinematicsTime;
 
-PIDController speedControllerL{1.0, 0.0, 0.5, 40, 255};
-PIDController speedControllerR{1.0, 0.0, 0.5, 40, 255};
+// Variables for encoder counts and speed
+volatile long pulseCountLeft = 0;
+volatile long pulseCountRight = 0;
+double currentSpeedLeft = 0;
+double currentSpeedRight = 0;
+const unsigned long speed_sampleTime = 50; // PID loop interval in milliseconds
+const unsigned long wall_sampleTime = 100;
+const unsigned long kinematics_sampleTime = 10;
+double max_targetSpeed = 1.6;
+double targetSpeed = 0.6;
+double outputValL, outputValR;
+double setSpeedLeft, setSpeedRight;
+double setSpeedLeft0 = 0;
+double setSpeedRight0 = 0;
+
+double setSpeed;
+unsigned long lastTime = 0;
+bool loopActive = false;
+
+// Kinematics
+double theta, posx, posy;
+double orientation, orientation00, coordinateX, coordinateY;
 
 
-PIDController wallLeftController{3.0, 3.0, 0.05, 0.0, 1.0};
-PIDController wallRightController{3.0, 3.0, 0.05, 0.0, 1.0};
+// Initialize the PID controller
+// Speed control
+#define KP 20
+#define KI 0
+#define KD 0
+#define KPr 20
+#define KIr 0
+#define KDr 0
 
-PIDController wallFrontController{5.0, 8.0, 0.1, 1.0, 0.0};
+AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 50, 255, KP, KI, KD);
+AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 50, 255, KPr, KIr, KDr);
+
+// Wall control
+#define KPwl 0.1
+#define KIwl 0
+#define KDwl 0
+#define KPwr 0.1
+#define KIwr 0
+#define KDwr 0
+
+AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, 0.4, max_targetSpeed, KPwl, KIwl, KDwl);
+AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, 0.4, max_targetSpeed, KPwr, KIwr, KDwr);
+
+// Front control
+#define KPf 1.688
+#define KIf 0.6222
+#define KDf 0.2539
+
+AutoPID wallFrontController(&distFront, &target_distFront, &setSpeed, max_targetSpeed, 0.0, KPf, KIf, KDf);
+
+struct grid
+{
+    double x;
+    double y;
+};
+const int rows = 12;          // Number of rows (y-axis)
+const int cols = 12;          // Number of columns (x-axis)
+const double delta = 0.148;     // Distance between points
+grid position[rows][cols];
+
+byte nextCellx, nextCelly;
 
 void setup() 
 {
-  // put your setup code here, to run once:
   pinMode(IR_Emit_Left, OUTPUT);     // IR Emitter 1 Left
   pinMode(IR_Trans_Left, INPUT);      // IR Transmitter 1
 
@@ -185,6 +181,17 @@ void setup()
   pinMode(encPinR, INPUT);
   attachInterrupt(digitalPinToInterrupt(encPinR), cntRPM_R, RISING);
 
+
+  // Fill the grid with (x, y) coordinates
+  for (int i = 0; i < rows; i++) {       // Loop over rows (y-coordinates)
+      for (int j = 0; j < cols; j++) {   // Loop over columns (x-coordinates)
+          double x = j * delta;          // Calculate x-coordinate
+          double y = i * delta;          // Calculate y-coordinate
+          position[i][j].x = x;           // Store the pair in the grid
+          position[i][j].y = y;
+      }
+  }
+
   strip.begin(); // Initialize the LED strip
   strip.show();  // Turn off all LEDs
 
@@ -192,6 +199,12 @@ void setup()
   revTime = prevTime;
   start_Time = millis();
   Serial.begin(115200);
+
+  speedControllerL.setTimeStep(speed_sampleTime);
+  speedControllerR.setTimeStep(speed_sampleTime);
+  wallLeftController.setTimeStep(wall_sampleTime);
+  wallRightController.setTimeStep(wall_sampleTime);
+  wallFrontController.setTimeStep(wall_sampleTime);
   //IMU_setup();
   /*
   if (!SD.begin(cs)) {
@@ -203,7 +216,462 @@ void setup()
   writeFile(SD, "/test.txt", "Start1 \n");
   */
 }
+
+void loop() 
+{
+  // put your main code here, to run repeatedly:
+  
+  if(blinker)
+  {
+    
+    unsigned long current_Time = millis();
+    if(current_Time >= kinematicsTime + kinematics_sampleTime)
+    {
+      kinematicsTime = current_Time;
+      kinematics();                   // ideally kalman fusion with gyro+theta and accel+posx/posy
+      //readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ); 
+      coordinateX = posx;
+      coordinateY = posy;
+      //coordinateX = complemantaryFilter(0.05, coordinateX, posx, sx);
+      //coordinateY = complemantaryFilter(0.05, coordinateY, posy, sy);
+      // orientation += complemantaryFilter(0.05, theta, theta_gyr);
+      // coordinateX += complemantaryFilter(0.05, posx, sx);
+      // coordinateY += complemantaryFilter(0.05, posy, sy);
+    }
+    if(current_Time >= wall_pidTime + wall_sampleTime)
+    {
+      wall_pidTime = current_Time;
+      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
+      wallLeftController.run();
+      wallRightController.run();
+      setSpeedLeft0 = setSpeedLeft;
+      setSpeedRight0 = setSpeedRight;
+      Serial.print("Left: " + String(setSpeedLeft));
+      Serial.println(" Right: " + String(setSpeedRight));
+      Serial.print("Left Speed: " + String(currentSpeedLeft));
+      Serial.println(" Right Speed: " + String(currentSpeedRight));
+      Serial.print(" IR Left:" + String(distLeft));
+      Serial.println("IR Right: " + String(distRight));
+      Serial.print(" Output L: " + String(outputValL));
+      Serial.println(" Output R: " + String(outputValR));
+
+      // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
+      //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
+      //                " Distance Right: " + String(distRight));
+    }
+    if(coordinateX >= position[nextCellx][nextCelly].x && coordinateY >= position[nextCellx][nextCelly].y)
+    {
+      bool wallRight, wallFront, wallLeft;
+      if(distRight > 4) 
+      {
+        wallRight = false;
+        state = 2;
+        
+      }
+      else              
+      {
+        wallRight = true;
+      }
+
+      if(distFront > 4) 
+      {
+        wallFront = false;
+        //state = 1;
+      }
+      else              
+      {
+        wallFront = true;
+      }
+      if(distLeft > 4)  
+      {
+        wallLeft = false;
+        state = 3;
+      }
+      else              
+      {
+        wallLeft = true;
+      }
+      //nextCell/direction = flooFill(wallRight, wallFront, wallLeft);
+      updatePosition(wallRight, wallFront, wallLeft);
+
+      // what condition to turn?
+      
+    }
+
+    int state = 1;
+    state = stateMachine(state, current_Time);
+
+    if(state == 0)
+    {
+      setColor(0, 0, 255);
+    }
+    else if(state == 1)
+    {
+      setColor(0, 255, 255);
+    }
+    else if(state == 2)
+    {
+      setColor(255, 0, 255);
+    }
+
+    // if(current_Time >= start_Time + 5000)
+    // {
+    //   setColor(0, 0, 255);
+    //   blinker = false;
+    //   delay(100);
+    //   driveForward(0, 0);
+    // }
+  }
+  else 
+  {
+    setColor(255,0,0);
+    stateMachine(0, 0);
+  }
+}
+
+int stateMachine(int state, unsigned long current_Time)
+{
+  switch(state)
+  {
+    case 0:     //Calibrate IR and Position
+    sx = 0.0;
+    sy = 0.0;
+    theta_gyr = 0.0;
+    posx = 0.0;
+    posy = 0.0;
+    theta = 0.0;
+
+    setColor(0,255,0);
+    return 1;
+
+    case 1:     //Vehicle Speed
+    {
+      if(current_Time >= speed_pidTime + speed_sampleTime)
+      {
+      speed_pidTime = current_Time;
+
+      speedControllerL.run();
+      speedControllerR.run();
+      //map(outputValL, 0.4, 1.6, 35, 255);
+      //map(outputValR, 0.4, 1.6, 35, 255);
+      }
+      if (outputValL >= 0 && outputValR >= 0)
+      {
+        driveForward(outputValL, outputValR);
+      }
+      else if (outputValL < 0 && outputValR < 0)
+      {
+        driveBackward(abs(outputValL), abs(outputValR));
+      }
+      return 1;
+    }
+    case 2:    // Rotate vehicle right
+    {
+      if(turnright == true)
+      {
+        orientation00 = orientation;
+        setSpeedLeft, setSpeedRight = targetSpeed;
+        return 0;
+      }
+      else if (turnright == false)
+      {
+        speedControllerL.run();
+        speedControllerR.run();
+        rotateRight(outputValL, outputValR);
+        return 3;
+      }
+    }
+    case 3:     // Rotate vehicle left
+    {
+      if(turnleft == true)
+      {
+        orientation00 = orientation;
+        setSpeedLeft, setSpeedRight = targetSpeed;
+        return 0;
+      }
+      else if (turnleft == false)
+      {
+        speedControllerL.run();
+        speedControllerR.run();
+        rotateLeft(outputValL, outputValR);
+        return 3;
+      }
+    }
+    case 4:       
+    {
+      driveStop();
+      return 1;
+    }
+    default:
+    return 0;
+  }
+}
+
+void updatePosition(bool wallRight, bool wallFront, bool wallLeft)
+{
+  if(orientation > -10 && orientation < 10)
+  {
+    if(wallRight) nextCellx++;
+    else if(wallFront) nextCelly++;
+    else if(wallLeft) nextCellx--;
+  }
+  else if(orientation > 80 && orientation < 100)
+  {
+    if(wallRight) nextCelly--;
+    else if(wallFront) nextCellx++;
+    else if(wallLeft) nextCelly++;
+  }
+  else if(orientation > 170 && orientation < 190 || orientation > -190 && orientation < -170)
+  {
+    if(wallRight) nextCellx--;
+    else if(wallFront) nextCelly--;
+    else if(wallLeft) nextCellx++;
+  }
+  else if(orientation > -90 && orientation < -70)
+  {
+    if(wallRight) nextCelly++;
+    else if(wallFront) nextCellx--;
+    else if(wallLeft) nextCelly--;
+  }
+}
 /*
+void controlOrientation() //future shit
+{
+  readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ);
+  yawMagnetometer = atan2(magY, magX) * 180 / PI;
+  if (yawMagnetometer < 0) yawMagnetometer += 360; // Ensure 0-360 range
+  unsigned long currentTime = millis();
+  dt = (currentTime - prevTime) / 1000.0;
+  prevTime = currentTime;
+  double filteredYaw = kalmanYaw.update(yawMagnetometer, gyrZ, dt);
+}*/
+
+void get_AngularVelocities(double& in1, double& in2)
+{
+  cnt00_L = i_L;
+  cnt00_R = i_R;
+  /*
+  if(cnt01_L > cnt00_L)
+  {
+    cnt00_L += n;
+  }
+  cnt01_L = cnt00_L - cnt01_L;
+  
+  if(cnt01_R > cnt00_R)
+  {
+    cnt00_R += n;
+  }
+  */
+  cnt01_R = cnt00_R - cnt01_R;
+  cnt01_L = cnt00_L - cnt01_L;
+
+  unsigned long timer = millis();
+  double dtime = timer - revTime;
+  revTime = timer;
+  dtime = dtime/1000.0; 
+  double speed_R, speed_L;
+  uint8_t ticks_per_rot = 140;
+  double radiansPerCount = 2 * PI / ticks_per_rot; // Winkel pro Count
+  double zwischenrechnerL = (double)cnt01_L*(double)radiansPerCount;
+  double zwischenrechnerR = (double)cnt01_R*(double)radiansPerCount;
+  speed_L = zwischenrechnerL / dtime;
+  speed_R = zwischenrechnerR / dtime;
+  cnt01_L = cnt00_L;
+  cnt01_R = cnt00_R;
+  in1 = speed_L;
+  in2 = speed_R;
+}
+
+void get_LinearVelocity(double& speed_L, double& speed_R)
+{
+  double omega_L, omega_R ;
+  get_AngularVelocities(omega_L, omega_R); 
+  double r = 0.019; 
+  speed_L = r * omega_L; // m/s linear speed
+  speed_R = r * omega_R;
+  //Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
+}
+
+void get_LinearVelocities(double& speed_L, double& speed_R)
+{
+  double omega_L = speed_L;
+  double omega_R = speed_R; 
+  double r = 0.019; 
+  speed_L = r * omega_L; // m/s linear speed
+  speed_R = r * omega_R;
+  
+  //Serial.println("omegaL: " + String(omega_L) + " omegaR: " + String(omega_R));
+  //Serial.println("LinSpeedL: " + String(speed_L) + " LinSpeedR: " + String(speed_R));
+}
+
+
+void kinematics()
+{
+  double omega, speed, speedx, speedy; 
+  double wheelDistance = 0.06;
+  double timer = kinematics_sampleTime/1000;
+  
+  get_AngularVelocities(currentSpeedLeft, currentSpeedRight);
+  get_LinearVelocities(currentSpeedLeft, currentSpeedRight);
+  
+  if(currentSpeedLeft >= currentSpeedRight)
+  {
+    omega = (currentSpeedLeft - currentSpeedRight) / wheelDistance;
+  }
+  else
+  {
+    omega = (currentSpeedRight - currentSpeedLeft) / wheelDistance;
+  }
+
+ 
+  theta += omega * timer;   // orientation
+  // theta = omega * timer;   // orientation
+  speed = (currentSpeedLeft + currentSpeedRight) / 2;
+  speedx = speed * cos(theta);
+  speedy = speed * sin(theta);
+  posx += speedx * timer;
+  posy += speedy * timer;
+  // posx = speedx * timer;
+  // posy = speedy * timer;
+
+}
+
+double complemantaryFilter(double alpha, double value, double value1, double value2)
+{
+  value = alpha*(value + value1)+(1-alpha)*value2; // a(theta+theta_gyr) + (1-a)*theta_kine
+  return value;
+}
+
+void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16_t& distFrontRight, double& distRight)
+{
+  digitalWrite(IR_Emit_Left, HIGH);
+  delayMicroseconds(100);
+  distL = analogRead(IR_Trans_Left);
+  digitalWrite(IR_Emit_Left, LOW);
+
+  digitalWrite(IR_Emit_FrontLeft, HIGH);
+  delayMicroseconds(100);
+  distFrontLeft = analogRead(IR_Trans_FrontLeft);
+  digitalWrite(IR_Emit_FrontLeft, LOW);
+
+  digitalWrite(IR_Emit_Front, HIGH);
+  delayMicroseconds(100);
+  distF = analogRead(IR_Trans_Front);
+  digitalWrite(IR_Emit_Front, LOW);
+
+  digitalWrite(IR_Emit_FrontRight, HIGH);
+  delayMicroseconds(100);
+  distFrontRight = analogRead(IR_Trans_FrontRight);
+  digitalWrite(IR_Emit_FrontRight, LOW);
+
+  digitalWrite(IR_Emit_Right, HIGH);
+  delayMicroseconds(100);
+  distR = analogRead(IR_Trans_Right);
+  digitalWrite(IR_Emit_Right, LOW);
+
+  distLeft = pow(distL,4)*-1.7647e-12+pow(distL,3)*1.4833e-08+pow(distL,2)*-3.3084e-05+distL*0.0320+9.4376;
+  distFront = pow(distF, 5) * 8.9719e-15 + pow(distF, 4) * -5.7233e-11 + pow(distF, 3) * 1.3600e-07 
+              + pow(distF, 2) * -1.4151e-04 + distF * 0.0707 + 13.8345;
+  distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184;
+}
+
+void driveBackward(double velL, double velR)
+{
+  analogWrite(motorL_in1, 0);
+  delayMicroseconds(200);
+  analogWrite(motorL_in2, velL);
+  analogWrite(motorR_in1, 0);
+  delayMicroseconds(200);
+  analogWrite(motorR_in2, velR);
+}
+
+void driveStop()
+{
+  digitalWrite(motorL_in1, 0);
+  digitalWrite(motorL_in2, 0);
+  digitalWrite(motorR_in1, 0);
+  digitalWrite(motorR_in2, 0);
+}
+
+void driveForward(double velL, double velR)
+{
+  analogWrite(motorL_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorL_in1, velL);
+  analogWrite(motorR_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorR_in1, velR);
+}
+
+void rotateRight(double vel1, double vel2)
+{
+  analogWrite(motorL_in1, 0);
+  delayMicroseconds(200);
+  analogWrite(motorL_in2, vel1);
+  analogWrite(motorR_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorR_in1, vel2);
+
+  if(orientation >= orientation00 + 90)
+  {
+    turnright = true;
+  }
+
+//double gyro = myICM.gyrZ();
+// double gyro = 0;
+
+// angle += gyro*0.005;
+// if(angle >= 90)
+// {
+//   turnright = true;
+//   angle = 0;
+// }
+}
+
+void rotateLeft(double vel1, double vel2)
+{
+  analogWrite(motorL_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorL_in1, vel1);
+  analogWrite(motorR_in1, 0);
+  delayMicroseconds(200);
+  analogWrite(motorR_in2, vel2);
+  
+  if(orientation <= orientation00 - 90)
+  {
+    turnleft = true;
+  }
+
+//double gyro = myICM.gyrZ();
+// double gyro = 0;
+// angle += gyro*0.005;
+// if(angle >= -90)
+// {
+//   turnleft = true;
+//   angle = 0;
+// }
+}
+
+void cntRPM_L()
+{
+  i_L++;
+}
+
+void cntRPM_R()
+{
+  i_R++;
+}
+
+
+void setColor(uint8_t r, uint8_t g, uint8_t b) 
+{
+  for (int i = 0; i < strip.numPixels(); i++) {
+    strip.setPixelColor(i, r,g,b); // Set color for each LED
+  }
+  strip.show(); // Update the LEDs
+}
+
+
 void IMU_setup()
 {
   Wire.begin();
@@ -323,8 +791,9 @@ void IMU_setup()
   Serial.println(F("Configuration complete!"));
 }
 
-void readIMU(float& x_acc, float& y_acc, float& z_acc, float& x_gyr, float& y_gyr, float& z_gyr, float& x_mag, float& y_mag, float& z_mag)
+void readIMU(double& x_acc, double& y_acc, double& z_acc, double& x_gyr, double& y_gyr, double& z_gyr, double& x_mag, double& y_mag, double& z_mag)
 {
+  double timer = kinematics_sampleTime/1000;
   if(myICM.dataReady())
   {
     myICM.getAGMT();                // The values are only updated when you call 'getAGMT'
@@ -341,305 +810,22 @@ void readIMU(float& x_acc, float& y_acc, float& z_acc, float& x_gyr, float& y_gy
     y_mag = myICM.magY();
     z_mag = myICM.magZ();
     
-    //delay(30);
+    theta_gyr += timer*gyrZ;
+    // theta_gyr = timer*gyrZ;
+    orientation = complemantaryFilter(0.05, orientation, theta, theta_gyr);
+    orientation += complemantaryFilter(0.05, orientation, theta, theta_gyr);
+    
+    sx += x_acc * cos(orientation) * pow(timer, 2) + velX * timer;
+    sy += x_acc * sin(orientation) * pow(timer, 2) + velY * timer; 
+    // sx = x_acc * cos(orientation) * pow(timer, 2) + velX * timer;
+    // sy = x_acc * sin(orientation) * pow(timer, 2) + velY * timer; 
+    velX = x_acc * cos(orientation) * timer; 
+    velY = x_acc * sin(orientation) * timer;
   }
-  else
-  {
-    Serial.println("Waiting for data");
-    //delay(500);
-  }
-}
-*/
-void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16_t& distFrontRight, double& distRight)
-{
-  digitalWrite(IR_Emit_Left, HIGH);
-  delayMicroseconds(100);
-  distL = analogRead(IR_Trans_Left);
-  digitalWrite(IR_Emit_Left, LOW);
-
-  digitalWrite(IR_Emit_FrontLeft, HIGH);
-  delayMicroseconds(100);
-  distFrontLeft = analogRead(IR_Trans_FrontLeft);
-  digitalWrite(IR_Emit_FrontLeft, LOW);
-
-  digitalWrite(IR_Emit_Front, HIGH);
-  delayMicroseconds(100);
-  distF = analogRead(IR_Trans_Front);
-  digitalWrite(IR_Emit_Front, LOW);
-
-  digitalWrite(IR_Emit_FrontRight, HIGH);
-  delayMicroseconds(100);
-  distFrontRight = analogRead(IR_Trans_FrontRight);
-  digitalWrite(IR_Emit_FrontRight, LOW);
-
-  digitalWrite(IR_Emit_Right, HIGH);
-  delayMicroseconds(100);
-  distR = analogRead(IR_Trans_Right);
-  digitalWrite(IR_Emit_Right, LOW);
-
-  distLeft = pow(distL, 3) * 2.7458e-09 + pow(distL, 2) * -7.9716e-06 + distL * 0.0146 + 12.5175;
-  distFront = pow(distF, 5) * 8.9719e-15 + pow(distF, 4) * -5.7233e-11 + pow(distF, 3) * 1.3600e-07 
-              + pow(distF, 2) * -1.4151e-04 + distF * 0.0707 + 13.8345;
-  distRight = pow(distR, 3) * 1.6985e-09 + pow(distR, 2) * -6.2843e-06 + distR * 0.0124 + 12.3945;
-}
-
-void driveBackward(float velL, float velR)
-{
-  analogWrite(motorL_in1, 0);
-  delayMicroseconds(200);
-  analogWrite(motorL_in2, velL);
-  analogWrite(motorR_in1, 0);
-  delayMicroseconds(200);
-  analogWrite(motorR_in2, velR);
-}
-
-void driveForward(float velL, float velR)
-{
-  analogWrite(motorL_in2, 0);
-  delayMicroseconds(200);
-  analogWrite(motorL_in1, velL);
-  analogWrite(motorR_in2, 0);
-  delayMicroseconds(200);
-  analogWrite(motorR_in1, velR);
-}
-
-void rotateRight(float velL, float velR)
-{
-  analogWrite(motorL_in1, 0);
-  delayMicroseconds(200);
-  analogWrite(motorL_in2, velL);
-  analogWrite(motorR_in2, 0);
-  delayMicroseconds(200);
-  analogWrite(motorR_in1, velR);
-
-  //double gyro = myICM.gyrZ();
-  double gyro = 0;
-
-  angle += gyro*0.005;
-  if(angle >= 90)
-  {
-    turnright = true;
-    angle = 0;
-  }
-}
-
-void rotateLeft(float velL, float velR)
-{
-  analogWrite(motorL_in2, 0);
-  delayMicroseconds(200);
-  analogWrite(motorL_in1, velL);
-  analogWrite(motorR_in1, 0);
-  delayMicroseconds(200);
-  analogWrite(motorR_in2, velR);
-
-  //double gyro = myICM.gyrZ();
-  double gyro = 0;
-  angle += gyro*0.005;
-  if(angle >= -90)
-  {
-    turnleft = true;
-    angle = 0;
-  }
-}
-
-void cntRPM_L()
-{
-  i_L++;
-}
-
-void cntRPM_R()
-{
-  i_R++;
 }
 
 void blink()
 {
   blinker = true;
   start_Time = millis();
-}
-
-void get_AngularVelocities(double& in1, double& in2)
-{
-  cnt00_L = i_L;
-  cnt00_R = i_R;
-  /*
-  if(cnt01_L > cnt00_L)
-  {
-    cnt00_L += n;
-  }
-  cnt01_L = cnt00_L - cnt01_L;
-  
-  if(cnt01_R > cnt00_R)
-  {
-    cnt00_R += n;
-  }
-  */
-  cnt01_R = cnt00_R - cnt01_R;
-  cnt01_L = cnt00_L - cnt01_L;
-
-  unsigned long timer = millis();
-  double dtime = timer - revTime;
-  revTime = timer;
-  dtime = dtime/1000; 
-  double speed_R, speed_L;
-  uint8_t ticks_per_rot = 140;
-  double zwischenrechnerL = (double)cnt01_L/(double)ticks_per_rot;
-  double zwischenrechnerR = (double)cnt01_R/(double)ticks_per_rot;
-  speed_L = zwischenrechnerL / dtime;
-  speed_R = zwischenrechnerR / dtime;
-  cnt01_L = cnt00_L;
-  cnt01_R = cnt00_R;
-  //Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
-  //Serial.println("Zwischen_L: " + String(zwischenrechnerL) + " Zwischen_R: " + String(zwischenrechnerR));
-  //Serial.println("Time: " + String(dtime));
-  //Serial.println("Ticks_L: " + String(cnt00_L) + " Ticks_R: " + String(cnt00_R));
-  //return zwischenrechnerL, zwischenrechnerR;
-  in1 = speed_L;
-  in2 = speed_R;
-}
-
-void get_LinearVelocity(double& speed_L, double& speed_R)
-{
-  double omega_L, omega_R ;
-  get_AngularVelocities(omega_L, omega_R); 
-  float r = 0.019; 
-  speed_L = 2 * M_PI * r * omega_L; // m/s linear speed
-  speed_R = r * 2 * M_PI * omega_R;
-  //Serial.println("SpeedL: " + String(speed_L) + " SpeedR: " + String(speed_R));
-}
-
-void get_LinearVelocities(double& speed_L, double& speed_R)
-{
-  double omega_L = speed_L;
-  double omega_R = speed_R; 
-  float r = 0.019; 
-  speed_L = 2*r * M_PI * omega_L; // m/s linear speed
-  speed_R = 2*r * M_PI * omega_R;
-  
-  //Serial.println("omegaL: " + String(omega_L) + " omegaR: " + String(omega_R));
-  Serial.println("LinSpeedL: " + String(speed_L) + " LinSpeedR: " + String(speed_R));
-}
-
-void scenerioOne() //max possible accel without controller
-{
-  double ang_speedL, ang_speedR, lin_speedL, lin_speedR, speedL, speedR;
-  unsigned long timee = millis();
-  driveForward(255, 255);
-  get_AngularVelocities(speedL, speedR);
-  get_LinearVelocities(speedL, speedR);
-  //save in sd
-}
-
-void scenerioTwo() //max possible accel with controller
-{
-  double ang_speedL, ang_speedR, lin_speedL, lin_speedR, speedL, speedR, setSpeed;
-  setSpeed = 1.0;
-  unsigned long timee = millis();
-  
-  get_AngularVelocities(speedL, speedR);
-  //Serial.println("Angular_L: " + String(speedL));
-  ang_speedL = speedL;
-  ang_speedR = speedR;
-  get_LinearVelocities(speedL, speedR);
-  lin_speedL = speedL;
-  lin_speedR = speedR;
-  float controlSignal_L = speedControllerL.update(speedL, setSpeed);
-  float controlSignal_R = speedControllerR.update(speedR, setSpeed);
-  Serial.println("Signal_L: " + String(controlSignal_L)+ " Signal_R: " + String(controlSignal_R));
-  driveForward((int)controlSignal_L, (int)controlSignal_R);
-  //driveForward(40, 40);
-  
-  //save in sd
-  //saveToSD(timee, ang_speedL, ang_speedR, lin_speedL, lin_speedR, controlSignal_L, controlSignal_R);
-}
-
-void scenerioThree() //drive in between walls
-{
-  double ang_speedL, ang_speedR, lin_speedL, lin_speedR, speedL, speedR, setSpeedL, setSpeedR;
-  setSpeedL = wallLeftController.update(distLeft, 800); // fixed value for analog wall distance --> maybe declaration with calibration
-  setSpeedR = wallLeftController.update(distRight, 800);
-  unsigned long timee = millis();
-  get_AngularVelocities(speedL, speedR);
-  ang_speedL = speedL;
-  ang_speedR = speedR;
-  get_LinearVelocities(speedL, speedR);
-  lin_speedL = speedL;
-  lin_speedR = speedR;
-  float controlSignal_L = speedControllerL.update(speedL, setSpeedL);
-  float controlSignal_R = speedControllerR.update(speedR, setSpeedR);
-  driveForward(controlSignal_L, controlSignal_R);
-
-  //save in sd
-  //saveToSD(timee, ang_speedL, ang_speedR, lin_speedL, lin_speedR, controlSignal_L, controlSignal_R);
-}
-
-void scenarioFour()
-{
-  double ang_speedL, ang_speedR, lin_speedL, lin_speedR, speedL, speedR, setSpeed;
-  setSpeed = wallFrontController.update(distFront, 300);
-  unsigned long timee = millis();
-  
-  get_AngularVelocities(speedL, speedR);
-  ang_speedL = speedL;
-  ang_speedR = speedR;
-  get_LinearVelocities(speedL, speedR);
-  lin_speedL = speedL;
-  lin_speedR = speedR;
-  float controlSignal_L = speedControllerL.update(lin_speedL, setSpeed);
-  float controlSignal_R = speedControllerR.update(lin_speedR, setSpeed);
-  driveForward(controlSignal_L, controlSignal_R);
-
-  //save in sd
-  saveToSD(timee, ang_speedL, ang_speedR, lin_speedL, lin_speedR, controlSignal_L, controlSignal_R);
-}
-
-void saveToSD(unsigned long t, double ang_L, double ang_R, double lin_L, double lin_R, byte Sig_L, byte Sig_R)
-{
-
-}
-
-void setColor(uint8_t r, uint8_t g, uint8_t b) 
-{
-  for (int i = 0; i < strip.numPixels(); i++) {
-    strip.setPixelColor(i, r,g,b); // Set color for each LED
-  }
-  strip.show(); // Update the LEDs
-}
-
-void loop() {
-// put your main code here, to run repeatedly:
-uint32_t ticks = i_R;
-//Serial.println("ticks: "+ ticks);
-  if(blinker)
-  {
-    setColor(0,255,0);
-    unsigned long current_Time = millis();
-    if(current_Time >= last_Time + 5)
-    {
-      //myICM.getAGMT();
-      last_Time = current_Time;
-      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distFront);
-      // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
-      //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
-      //                " Distance Right: " + String(distRight));
-    }
-    //scenerioOne();
-    scenerioTwo();
-    //scenerioThree();
-    //scenerioFour();
-    //driveForward(40,40);
-    if(current_Time >= start_Time + 5000)
-    {
-      setColor(0,0,255);
-      blinker = false;
-      driveForward(0, 0);
-      delayMicroseconds(100);
-      driveBackward(0, 0);
-      delay(3000);
-    }
-  }
-  else 
-  {
-    setColor(255,0,0);
-  }
 }
