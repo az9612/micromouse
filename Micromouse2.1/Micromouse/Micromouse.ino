@@ -88,15 +88,15 @@ volatile long pulseCountLeft = 0;
 volatile long pulseCountRight = 0;
 double currentSpeedLeft = 0;
 double currentSpeedRight = 0;
-const unsigned long speed_sampleTime = 50; // PID loop interval in milliseconds
+const unsigned long speed_sampleTime = 20; // PID loop interval in milliseconds
 const unsigned long wall_sampleTime = 25;
-const unsigned long kinematics_sampleTime = 10;
+const unsigned long kinematics_sampleTime = 20;
 double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
 double outputValL, outputValR;
 double setSpeedLeft, setSpeedRight;
-double setSpeedLeft0 = 0.8;
-double setSpeedRight0 = 0.8;
+double setSpeedLeft0 = 0.5;
+double setSpeedRight0 = 0.5;
 
 double setSpeed;
 unsigned long lastTime = 0;
@@ -108,16 +108,15 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 
 // Initialize the PID controller
-// Speed control
-#define KP 1
-#define KI 0
-#define KD 0
-#define KPr 1
-#define KIr 0
-#define KDr 0
+#define Kp 800
+#define KI 0.5
+#define KD 0.2
+#define KP 0
 
-AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 0.4, 1.6, KP, KI, KD);
-AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0.4, 1.6, KPr, KIr, KDr);
+
+AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 0, 255, KP, KI, KD);
+AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0, 255, KP, KI, KD);
+
 
 // Wall control
 #define KPwl 0.01
@@ -127,8 +126,8 @@ AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0.4, 
 #define KIwr 0
 #define KDwr 0
 
-AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, -0.1, 0.1, KPwl, KIwl, KDwl);
-AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, -0.1, 0.1, KPwr, KIwr, KDwr);
+AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, 0.4, 1.8, KPwl, KIwl, KDwl);
+AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, 0.4, 1.8, KPwr, KIwr, KDwr);
 
 // Front control
 #define KPf 1.688
@@ -372,25 +371,46 @@ int stateMachine(int state, unsigned long current_Time)
       {
       speed_pidTime = current_Time;
 
-      speedControllerL.run();
-      speedControllerR.run();
-      Serial.print("OutputLpre:" + String(outputValL));
-      Serial.print("OutputRpre:" + String(outputValR));
-      outputValL = map(outputValL, 0.4, 1.6, 35, 255);
-      outputValR = map(outputValR, 0.4, 1.6, 35, 255);
+      double errorL = setSpeedLeft0 - currentSpeedLeft;
+      double errorR = setSpeedRight0 - currentSpeedRight;
+
+      Serial.print("errorL:");
+      Serial.print(errorL);
+      Serial.print(",");
+      Serial.print("errorR:");
+      Serial.print(errorR);
+      Serial.print(",");
+
+      // P-Regler anwenden
+      double motorOutputL = Kp * errorL;
+      double motorOutputR = Kp * errorR * 1.13;
+
+      // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
+      motorOutputL = constrain(motorOutputL, 20, 255);
+      motorOutputR = constrain(motorOutputR, 20, 255);
+
+      // Motoren ansteuern
+      driveForward(motorOutputL,motorOutputR);
+
+
+      //Serial.print("OutputLpre:" + String(outputValL));
+      //Serial.print("OutputRpre:" + String(outputValR));
+      Serial.print("motorOutputL:");
+      Serial.print((motorOutputL));
+      Serial.print(","); 
+      Serial.print("motorOutputR:");
+      Serial.print((motorOutputR));
+      Serial.print(","); 
+      // outputValL = map(outputValL, 0.4, 1.8, 35, 255);
+      // outputValR = map(outputValR, 0.4, 1.8, 35, 255);
       outputValL = constrain(outputValL,35,255);
       outputValR = constrain(outputValR,35,255);
 
-      Serial.print("OutputL:" + String(outputValL));
-      Serial.println("OutputR:" + String(outputValR));
-      }
-      if (outputValL >= 0 && outputValR >= 0)
-      {
-        driveForward(outputValL, outputValR);
-      }
-      else if (outputValL < 0 && outputValR < 0)
-      {
-        driveBackward(abs(outputValL), abs(outputValR));
+      Serial.print("OutputL:");
+      Serial.print((outputValL));
+      Serial.print(","); 
+      Serial.print("OutputR:");
+      Serial.println(outputValR);
       }
       return 1;
     }
@@ -537,7 +557,7 @@ void get_LinearVelocities(double& speed_L, double& speed_R)
 void kinematics()
 {
   double omega, speed, speedx, speedy; 
-  double wheelDistance = 0.06;
+  double wheelDistance = 0.091;
   double timer = kinematics_sampleTime/1000;
   
   get_AngularVelocities(currentSpeedLeft, currentSpeedRight);
@@ -695,7 +715,7 @@ void cntRPM_R()
 void setColor(uint8_t r, uint8_t g, uint8_t b) 
 {
   for (int i = 0; i < strip.numPixels(); i++) {
-    strip.setPixelColor(i, r,g,b); // Set color for each LED
+    strip.setPixelColor(i, (r-100),(g-100),(b-100)); // Set color for each LED
   }
   strip.show(); // Update the LEDs
 }
