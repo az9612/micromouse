@@ -89,14 +89,14 @@ volatile long pulseCountRight = 0;
 double currentSpeedLeft = 0;
 double currentSpeedRight = 0;
 const unsigned long speed_sampleTime = 50; // PID loop interval in milliseconds
-const unsigned long wall_sampleTime = 100;
+const unsigned long wall_sampleTime = 25;
 const unsigned long kinematics_sampleTime = 10;
 double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
 double outputValL, outputValR;
 double setSpeedLeft, setSpeedRight;
-double setSpeedLeft0 = 0;
-double setSpeedRight0 = 0;
+double setSpeedLeft0 = 0.8;
+double setSpeedRight0 = 0.8;
 
 double setSpeed;
 unsigned long lastTime = 0;
@@ -109,26 +109,26 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 // Initialize the PID controller
 // Speed control
-#define KP 20
+#define KP 1
 #define KI 0
 #define KD 0
-#define KPr 20
+#define KPr 1
 #define KIr 0
 #define KDr 0
 
-AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 50, 255, KP, KI, KD);
-AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 50, 255, KPr, KIr, KDr);
+AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 0.4, 1.6, KP, KI, KD);
+AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0.4, 1.6, KPr, KIr, KDr);
 
 // Wall control
-#define KPwl 0.1
+#define KPwl 0.01
 #define KIwl 0
 #define KDwl 0
-#define KPwr 0.1
+#define KPwr 0.01
 #define KIwr 0
 #define KDwr 0
 
-AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, 0.4, max_targetSpeed, KPwl, KIwl, KDwl);
-AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, 0.4, max_targetSpeed, KPwr, KIwr, KDwr);
+AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, -0.1, 0.1, KPwl, KIwl, KDwl);
+AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, -0.1, 0.1, KPwr, KIwr, KDwr);
 
 // Front control
 #define KPf 1.688
@@ -244,16 +244,38 @@ void loop()
       readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
       wallLeftController.run();
       wallRightController.run();
-      setSpeedLeft0 = setSpeedLeft;
-      setSpeedRight0 = setSpeedRight;
-      Serial.print("Left: " + String(setSpeedLeft));
-      Serial.println(" Right: " + String(setSpeedRight));
-      Serial.print("Left Speed: " + String(currentSpeedLeft));
-      Serial.println(" Right Speed: " + String(currentSpeedRight));
-      Serial.print(" IR Left:" + String(distLeft));
-      Serial.println("IR Right: " + String(distRight));
-      Serial.print(" Output L: " + String(outputValL));
-      Serial.println(" Output R: " + String(outputValR));
+      //setSpeedLeft0 = 0.8;
+      //setSpeedRight0 = 0.8;
+      Serial.print("setSpeedLeft:");
+      Serial.print(setSpeedLeft0);
+      //Serial.print(",");  // Tab als 
+      //Serial.print("setSpeedRight:");
+      //Serial.print(setSpeedRight0);
+      Serial.print(","); 
+      Serial.print("currentSpeedLeft:");
+      Serial.print(currentSpeedLeft);
+      Serial.print(","); 
+      Serial.print("currentSpeedRight:");
+      Serial.print(currentSpeedRight);
+      Serial.print(","); 
+      // Serial.print("distLeft:");
+      // Serial.print(distLeft);
+      // Serial.print(","); 
+      // Serial.print("distRight:");
+      // Serial.println(distRight);  // Letzte Zahl mit println, um die Zeile abzuschließen
+      
+      // Serial.print("Left: " + String(setSpeedLeft));
+      // Serial.printlln("");
+      // Serial.print(" Right: " + String(setSpeedRight));
+      // Serial.println("");
+      // Serial.print("Left Speed: " + String(currentSpeedLeft));
+      // Serial.println("");
+      // Serial.print(" Right Speed: " + String(currentSpeedRight));
+      // Serial.println("");
+      // Serial.print(" IR Left:" + String(distLeft));
+      // Serial.println("");
+      // Serial.print("IR Right: " + String(distRight));
+     
 
       // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
       //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
@@ -352,8 +374,15 @@ int stateMachine(int state, unsigned long current_Time)
 
       speedControllerL.run();
       speedControllerR.run();
-      //map(outputValL, 0.4, 1.6, 35, 255);
-      //map(outputValR, 0.4, 1.6, 35, 255);
+      Serial.print("OutputLpre:" + String(outputValL));
+      Serial.print("OutputRpre:" + String(outputValR));
+      outputValL = map(outputValL, 0.4, 1.6, 35, 255);
+      outputValR = map(outputValR, 0.4, 1.6, 35, 255);
+      outputValL = constrain(outputValL,35,255);
+      outputValR = constrain(outputValR,35,255);
+
+      Serial.print("OutputL:" + String(outputValL));
+      Serial.println("OutputR:" + String(outputValR));
       }
       if (outputValL >= 0 && outputValR >= 0)
       {
