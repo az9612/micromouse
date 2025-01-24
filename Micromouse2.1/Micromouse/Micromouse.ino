@@ -49,6 +49,7 @@ double distRight, distLeft, distFront;
 double target_distLeft = 28;
 double target_distRight = 28; 
 double target_distFront;
+long wallError;
 
 byte buttonPin = 12;
 
@@ -82,6 +83,7 @@ unsigned long revTime;
 unsigned long wall_pidTime;
 unsigned long speed_pidTime;
 unsigned long kinematicsTime;
+unsigned long blinker_Time;
 
 // Variables for encoder counts and speed
 volatile long pulseCountLeft = 0;
@@ -89,11 +91,11 @@ volatile long pulseCountRight = 0;
 double currentSpeedLeft = 0;
 double currentSpeedRight = 0;
 const unsigned long speed_sampleTime = 20; // PID loop interval in milliseconds
-const unsigned long wall_sampleTime = 25;
+const unsigned long wall_sampleTime = 20;
 const unsigned long kinematics_sampleTime = 20;
 double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
-double outputValL, outputValR;
+double motorOutputL, motorOutputR;
 double setSpeedLeft, setSpeedRight;
 double setSpeedLeft0 = 0.5;
 double setSpeedRight0 = 0.5;
@@ -108,14 +110,12 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 
 // Initialize the PID controller
-#define Kp 800
+#define Kp 600
 #define KI 0.5
 #define KD 0.2
 #define KP 0
-
-
-AutoPID speedControllerL(&currentSpeedLeft, &setSpeedLeft0, &outputValL, 0, 255, KP, KI, KD);
-AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0, 255, KP, KI, KD);
+double prevErrorL;
+double prevErrorR;
 
 
 // Wall control
@@ -126,15 +126,10 @@ AutoPID speedControllerR(&currentSpeedRight, &setSpeedRight0, &outputValR, 0, 25
 #define KIwr 0
 #define KDwr 0
 
-AutoPID wallLeftController(&distLeft, &target_distLeft, &setSpeedLeft, 0.4, 1.8, KPwl, KIwl, KDwl);
-AutoPID wallRightController(&distRight, &target_distRight, &setSpeedRight, 0.4, 1.8, KPwr, KIwr, KDwr);
-
 // Front control
 #define KPf 1.688
 #define KIf 0.6222
 #define KDf 0.2539
-
-AutoPID wallFrontController(&distFront, &target_distFront, &setSpeed, max_targetSpeed, 0.0, KPf, KIf, KDf);
 
 struct grid
 {
@@ -199,11 +194,6 @@ void setup()
   start_Time = millis();
   Serial.begin(115200);
 
-  speedControllerL.setTimeStep(speed_sampleTime);
-  speedControllerR.setTimeStep(speed_sampleTime);
-  wallLeftController.setTimeStep(wall_sampleTime);
-  wallRightController.setTimeStep(wall_sampleTime);
-  wallFrontController.setTimeStep(wall_sampleTime);
   //IMU_setup();
   /*
   if (!SD.begin(cs)) {
@@ -222,131 +212,135 @@ void loop()
   
   if(blinker)
   {
-    
     unsigned long current_Time = millis();
-    if(current_Time >= kinematicsTime + kinematics_sampleTime)
+    if(current_Time >= blinker_Time + 5000) 
     {
-      kinematicsTime = current_Time;
-      kinematics();                   // ideally kalman fusion with gyro+theta and accel+posx/posy
-      //readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ); 
-      coordinateX = posx;
-      coordinateY = posy;
-      //coordinateX = complemantaryFilter(0.05, coordinateX, posx, sx);
-      //coordinateY = complemantaryFilter(0.05, coordinateY, posy, sy);
-      // orientation += complemantaryFilter(0.05, theta, theta_gyr);
-      // coordinateX += complemantaryFilter(0.05, posx, sx);
-      // coordinateY += complemantaryFilter(0.05, posy, sy);
-    }
-    if(current_Time >= wall_pidTime + wall_sampleTime)
-    {
-      wall_pidTime = current_Time;
-      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-      wallLeftController.run();
-      wallRightController.run();
-      //setSpeedLeft0 = 0.8;
-      //setSpeedRight0 = 0.8;
-      Serial.print("setSpeedLeft:");
-      Serial.print(setSpeedLeft0);
-      //Serial.print(",");  // Tab als 
-      //Serial.print("setSpeedRight:");
-      //Serial.print(setSpeedRight0);
-      Serial.print(","); 
-      Serial.print("currentSpeedLeft:");
-      Serial.print(currentSpeedLeft);
-      Serial.print(","); 
-      Serial.print("currentSpeedRight:");
-      Serial.print(currentSpeedRight);
-      Serial.print(","); 
-      // Serial.print("distLeft:");
-      // Serial.print(distLeft);
-      // Serial.print(","); 
-      // Serial.print("distRight:");
-      // Serial.println(distRight);  // Letzte Zahl mit println, um die Zeile abzuschließen
-      
-      // Serial.print("Left: " + String(setSpeedLeft));
-      // Serial.printlln("");
-      // Serial.print(" Right: " + String(setSpeedRight));
-      // Serial.println("");
-      // Serial.print("Left Speed: " + String(currentSpeedLeft));
-      // Serial.println("");
-      // Serial.print(" Right Speed: " + String(currentSpeedRight));
-      // Serial.println("");
-      // Serial.print(" IR Left:" + String(distLeft));
-      // Serial.println("");
-      // Serial.print("IR Right: " + String(distRight));
-     
-
-      // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
-      //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
-      //                " Distance Right: " + String(distRight));
-    }
-    if(coordinateX >= position[nextCellx][nextCelly].x && coordinateY >= position[nextCellx][nextCelly].y)
-    {
-      bool wallRight, wallFront, wallLeft;
-      if(distRight > 4) 
+    
+      if(current_Time >= kinematicsTime + kinematics_sampleTime)
       {
-        wallRight = false;
-        state = 2;
+        kinematicsTime = current_Time;
+        kinematics();                   // ideally kalman fusion with gyro+theta and accel+posx/posy
+        //readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ); 
+        coordinateX = posx;
+        coordinateY = posy;
+        //coordinateX = complemantaryFilter(0.05, coordinateX, posx, sx);
+        //coordinateY = complemantaryFilter(0.05, coordinateY, posy, sy);
+        // orientation += complemantaryFilter(0.05, theta, theta_gyr);
+        // coordinateX += complemantaryFilter(0.05, posx, sx);
+        // coordinateY += complemantaryFilter(0.05, posy, sy);
+      }
+      if(current_Time >= wall_pidTime + wall_sampleTime)
+      {
+        wall_pidTime = current_Time;
+        readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
+        //setSpeedLeft0 = 0.8;
+        //setSpeedRight0 = 0.8;
+        Serial.print("setSpeedLeft:");
+        Serial.print(setSpeedLeft0);
+        //Serial.print(",");  // Tab als 
+        //Serial.print("setSpeedRight:");
+        //Serial.print(setSpeedRight0);
+        Serial.print(","); 
+        Serial.print("currentSpeedLeft:");
+        Serial.print(currentSpeedLeft);
+        Serial.print(","); 
+        Serial.print("currentSpeedRight:");
+        Serial.print(currentSpeedRight);
+        Serial.print(","); 
+        Serial.print("distLeft:");
+        Serial.print(distLeft);
+        Serial.print(","); 
+        Serial.print("distRight:");
+        Serial.print(distRight);  // Letzte Zahl mit println, um die Zeile abzuschließen
+        Serial.print(","); 
+        Serial.print("distFront:");
+        Serial.print(distFront);  // Letzte Zahl mit println, um die Zeile abzuschließen
+        Serial.print(","); 
+        // Serial.print("Left: " + String(setSpeedLeft));
+        // Serial.printlln("");
+        // Serial.print(" Right: " + String(setSpeedRight));
+        // Serial.println("");
+        // Serial.print("Left Speed: " + String(currentSpeedLeft));
+        // Serial.println("");
+        // Serial.print(" Right Speed: " + String(currentSpeedRight));
+        // Serial.println("");
+        // Serial.print(" IR Left:" + String(distLeft));
+        // Serial.println("");
+        // Serial.print("IR Right: " + String(distRight));
+      
+
+        // Serial.println("Distance Left: " + String(distLeft) + " Distance Front Left: " + String(distFrontLeft) + 
+        //                " Distance Front: " + String(distFront) + " Distance Front Right: " + String(distFrontRight) + 
+        //                " Distance Right: " + String(distRight));
+      }
+      if(coordinateX >= position[nextCellx][nextCelly].x && coordinateY >= position[nextCellx][nextCelly].y)
+      {
+        bool wallRight, wallFront, wallLeft;
+        if(distRight > 4) 
+        {
+          wallRight = false;
+          state = 2;
+          
+        }
+        else              
+        {
+          wallRight = true;
+        }
+
+        if(distFront > 4) 
+        {
+          wallFront = false;
+          //state = 1;
+        }
+        else              
+        {
+          wallFront = true;
+        }
+        if(distLeft > 4)  
+        {
+          wallLeft = false;
+          state = 3;
+        }
+        else              
+        {
+          wallLeft = true;
+        }
+        //nextCell/direction = flooFill(wallRight, wallFront, wallLeft);
+        updatePosition(wallRight, wallFront, wallLeft);
+
+        // what condition to turn?
         
       }
-      else              
+
+      int state = 1;
+      state = stateMachine(state, current_Time);
+
+      if(state == 0)
       {
-        wallRight = true;
+        setColor(0, 0, 255);
+      }
+      else if(state == 1)
+      {
+        setColor(0, 255, 255);
+      }
+      else if(state == 2)
+      {
+        setColor(255, 0, 255);
       }
 
-      if(distFront > 4) 
-      {
-        wallFront = false;
-        //state = 1;
-      }
-      else              
-      {
-        wallFront = true;
-      }
-      if(distLeft > 4)  
-      {
-        wallLeft = false;
-        state = 3;
-      }
-      else              
-      {
-        wallLeft = true;
-      }
-      //nextCell/direction = flooFill(wallRight, wallFront, wallLeft);
-      updatePosition(wallRight, wallFront, wallLeft);
-
-      // what condition to turn?
-      
+      // if(current_Time >= start_Time + 5000)
+      // {
+      //   setColor(0, 0, 255);
+      //   blinker = false;
+      //   delay(100);
+      //   driveForward(0, 0);
+      // }
     }
-
-    int state = 1;
-    state = stateMachine(state, current_Time);
-
-    if(state == 0)
+    else 
     {
-      setColor(0, 0, 255);
+      setColor(255,0,0);
+      stateMachine(0, 0);
     }
-    else if(state == 1)
-    {
-      setColor(0, 255, 255);
-    }
-    else if(state == 2)
-    {
-      setColor(255, 0, 255);
-    }
-
-    // if(current_Time >= start_Time + 5000)
-    // {
-    //   setColor(0, 0, 255);
-    //   blinker = false;
-    //   delay(100);
-    //   driveForward(0, 0);
-    // }
-  }
-  else 
-  {
-    setColor(255,0,0);
-    stateMachine(0, 0);
   }
 }
 
@@ -371,46 +365,12 @@ int stateMachine(int state, unsigned long current_Time)
       {
       speed_pidTime = current_Time;
 
-      double errorL = setSpeedLeft0 - currentSpeedLeft;
-      double errorR = setSpeedRight0 - currentSpeedRight;
-
-      Serial.print("errorL:");
-      Serial.print(errorL);
-      Serial.print(",");
-      Serial.print("errorR:");
-      Serial.print(errorR);
-      Serial.print(",");
-
-      // P-Regler anwenden
-      double motorOutputL = Kp * errorL;
-      double motorOutputR = Kp * errorR * 1.13;
-
-      // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-      motorOutputL = constrain(motorOutputL, 20, 255);
-      motorOutputR = constrain(motorOutputR, 20, 255);
-
+      runPID();
       // Motoren ansteuern
       driveForward(motorOutputL,motorOutputR);
 
-
-      //Serial.print("OutputLpre:" + String(outputValL));
-      //Serial.print("OutputRpre:" + String(outputValR));
-      Serial.print("motorOutputL:");
-      Serial.print((motorOutputL));
-      Serial.print(","); 
-      Serial.print("motorOutputR:");
-      Serial.print((motorOutputR));
-      Serial.print(","); 
-      // outputValL = map(outputValL, 0.4, 1.8, 35, 255);
-      // outputValR = map(outputValR, 0.4, 1.8, 35, 255);
-      outputValL = constrain(outputValL,35,255);
-      outputValR = constrain(outputValR,35,255);
-
-      Serial.print("OutputL:");
-      Serial.print((outputValL));
-      Serial.print(","); 
-      Serial.print("OutputR:");
-      Serial.println(outputValR);
+    
+      
       }
       return 1;
     }
@@ -424,9 +384,7 @@ int stateMachine(int state, unsigned long current_Time)
       }
       else if (turnright == false)
       {
-        speedControllerL.run();
-        speedControllerR.run();
-        rotateRight(outputValL, outputValR);
+        //rotateRight(outputValL, outputValR);
         return 3;
       }
     }
@@ -440,9 +398,7 @@ int stateMachine(int state, unsigned long current_Time)
       }
       else if (turnleft == false)
       {
-        speedControllerL.run();
-        speedControllerR.run();
-        rotateLeft(outputValL, outputValR);
+        //rotateLeft(outputValL, outputValR);
         return 3;
       }
     }
@@ -455,7 +411,76 @@ int stateMachine(int state, unsigned long current_Time)
     return 0;
   }
 }
+void runPID(){
+  if (distFront > 50) {
 
+    
+    wallError = 0.0035* (distLeft - distRight);
+    if (distLeft > 55 || distRight > 55) wallError = 0;
+
+    double setSpeedLeft1 = setSpeedLeft0 - wallError;
+    double setSpeedRight1 = setSpeedRight0  + wallError;
+    Serial.print("setSL1:");
+    Serial.print(setSpeedLeft1);
+    Serial.print(",");
+    Serial.print("setSR1:");
+    Serial.print(setSpeedRight1);
+    Serial.print(",");
+    double errorL = setSpeedLeft1 - currentSpeedLeft;
+    double errorR = setSpeedRight1 - currentSpeedRight;
+
+    double derivativeL = errorL - prevErrorL;
+    double derivativeR = errorR - prevErrorR;
+
+    prevErrorL = errorL;
+    prevErrorR = errorR;
+    
+    // Serial.print("errorL:");
+    // Serial.print(errorL);
+    // Serial.print(",");
+    // Serial.print("errorR:");
+    // Serial.print(errorR);
+    // Serial.println(",");
+
+    /*
+    Serial.print("wallError:");
+    Serial.print(wallError);
+    Serial.print(",");
+    */
+    Serial.print("motorOutLpre:");
+    Serial.print(motorOutputL);
+    Serial.print(",");
+    Serial.print("motorOutRpre:");
+    Serial.print(motorOutputR);
+    Serial.print(",");
+
+    motorOutputL = Kp * errorL        + KD * derivativeL ;
+    motorOutputR = Kp * errorR * 1.13 + KD * derivativeR ;
+
+    // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
+    motorOutputL = constrain(motorOutputL, 35, 255);
+    motorOutputR = constrain(motorOutputR, 35, 255);
+    
+    Serial.print("motorOutLconstrain:");
+    Serial.print(motorOutputL);
+    Serial.print(",");
+    Serial.print("motorOutRconstrain:");
+    Serial.print(motorOutputR);
+    Serial.println(",");
+    /*
+    Serial.print("motorOutL:");
+    Serial.print(motorOutputL);
+    Serial.print(",");
+    Serial.print("motorOutR:");
+    Serial.print(motorOutputR);
+    Serial.println(",");
+    */
+  } else {
+    motorOutputL = 0;
+    motorOutputR = 0;
+    }
+
+}
 void updatePosition(bool wallRight, bool wallFront, bool wallLeft)
 {
   if(orientation > -10 && orientation < 10)
@@ -619,8 +644,7 @@ void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16
   digitalWrite(IR_Emit_Right, LOW);
 
   distLeft = pow(distL,4)*-1.7647e-12+pow(distL,3)*1.4833e-08+pow(distL,2)*-3.3084e-05+distL*0.0320+9.4376;
-  distFront = pow(distF, 5) * 8.9719e-15 + pow(distF, 4) * -5.7233e-11 + pow(distF, 3) * 1.3600e-07 
-              + pow(distF, 2) * -1.4151e-04 + distF * 0.0707 + 13.8345;
+  distFront = pow(distF,3)*5.9835e-09+pow(distF,2)*-2.0427e-05+distF*0.0306+13.6494;
   distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184;
 }
 
@@ -877,4 +901,5 @@ void blink()
 {
   blinker = true;
   start_Time = millis();
+  blinker_Time = millis();
 }
