@@ -176,6 +176,7 @@ byte motorR_in1 = 17;
 byte motorR_in2 = 33;
 byte encPinR = 35;
 
+bool turnright, turnleft = true;
 
 unsigned long last_Time = 0;
 unsigned long start_Time;
@@ -210,8 +211,8 @@ double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
 double motorOutputL, motorOutputR;
 double setSpeedLeft, setSpeedRight;
-double setSpeedLeft0 = 0.2;
-double setSpeedRight0 = 0.2;
+double setSpeedLeft0 = 0.3;
+double setSpeedRight0 = 0.3;
 double newPosition;
 
 double setSpeed;
@@ -224,19 +225,13 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 
 // Initialize the PID controller
-#define Kp 190
-#define KI 20
-#define KD 1
+#define Kp 100
+#define KI 10
+#define KD 10
 
 double prevErrorL;
 double prevErrorR;
-double prevErrorLL;
-double prevErrorRL;
-double prevErrorLR;
-double prevErrorRR;
-double integralL, integralR;
-double setSpeedLeft1, setSpeedRight1;
-double errorL, errorR, derivativeL, derivativeR;
+
 
 byte nextCellx, nextCelly;
 
@@ -294,7 +289,6 @@ void setup() {
   
 
 void loop() {
-testIR();
   if(blinker)
   {
     unsigned long current_Time = millis();
@@ -342,6 +336,7 @@ testIR();
           flood();
           flood2();
           updateTargetCell();
+          //log("updateTargetCell");
           goToTargetCell();
           floodArray[currentCell].visited = 1;
         }
@@ -428,22 +423,14 @@ void flood2() {
   }
 }
 
-void setColor(uint8_t r, uint8_t g, uint8_t b) 
+void driveForward(double velL, double velR)
 {
-  for (int i = 0; i < strip.numPixels(); i++) {
-    strip.setPixelColor(i, (r-100),(g-100),(b-100)); // Set color for each LED
-  }
-  strip.show(); // Update the LEDs
-}
-
-void driveForward(int velL, int velR)
-{
-    analogWrite(motorL_in2, 0);
-    delayMicroseconds(200);
-    analogWrite(motorL_in1, velL);
-    analogWrite(motorR_in2, 0);
-    delayMicroseconds(200);
-    analogWrite(motorR_in1, velR);
+  analogWrite(motorL_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorL_in1, velL);
+  analogWrite(motorR_in2, 0);
+  delayMicroseconds(200);
+  analogWrite(motorR_in1, velR);
 }
 
 void updateTargetCell() {
@@ -459,6 +446,7 @@ void updateTargetCell() {
         minNeighbourDistance = readingCellDistance;
         targetScore = readingCellScore;
         targetCell = readingCellLoc;
+        logCurrentCell(targetCell);
       }
     }
   }
@@ -522,11 +510,12 @@ void runPID2(){
   int64_t newPositionL = i_L;
   int64_t newPositionR = i_R;
   newPosition = ((double) newPositionL+(double)newPositionR)/2;
-  double stepsPID = 225;
-  double targetPosPID = newPosition + stepsPID;
+  double steps = 425;
+  double targetPos = newPosition + steps;
+  double integralL, integralR;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 15)
+  while (newPosition < targetPos)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -536,65 +525,59 @@ void runPID2(){
     newPosition = ((double) newPositionL+(double)newPositionR)/2;
   
     //targetPos = newPos steps;
-    wallError = 0.001 * ((distLeft -8) - distRight);
-    if ((distLeft > 70) || (distRight > 40)) {
+    wallError = 0.0008 * (distLeft - distRight);
+    if (distLeft > 55 || distRight > 55) {
       wallError = 0;
     }
     
-    setSpeedLeft1 = setSpeedLeft0 - wallError;
-    setSpeedRight1 = setSpeedRight0 + wallError;
+    double setSpeedLeft1 = setSpeedLeft0 - wallError;
+    double setSpeedRight1 = setSpeedRight0  + wallError;
 
-      if (abs(targetPosPID-newPosition) < 100) {
-        if (setSpeedLeft1 > 0.1) {
-          setSpeedLeft1 = setSpeedLeft1 - 0.04;
-          setSpeedRight1 = setSpeedRight1 -0.04;
-      } else if (setSpeedLeft1 < 0.2) {
-          setSpeedLeft1 = setSpeedLeft1 + 0.01;
-          setSpeedRight1 = setSpeedRight1 + 0.01;  
-      }
-    }
-    errorL = setSpeedLeft1 - currentSpeedLeft;
-    errorR = setSpeedRight1 - currentSpeedRight;
+    //   if (abs(targetPos-newPosition) < 200) {
+    //     if (setSpeedLeft1 > 0.3) {
+    //       setSpeedLeft1 = setSpeedLeft1 - 0.01;
+    //       setSpeedRight1 = setSpeedRight1 -0.01;
+    //   } else if (setSpeedLeft1 < 0.3) {
+    //       setSpeedLeft1 = setSpeedLeft1 + 0.01;
+    //       setSpeedRight1 = setSpeedRight1 + 0.01;  
+    //   }
+    // }
+    double errorL = setSpeedLeft1 - currentSpeedLeft;
+    double errorR = setSpeedRight1 - currentSpeedRight;
 
     integralL += errorL;
     integralR += errorR;
-    
-    derivativeL = errorL - prevErrorL;
-    derivativeR = errorR - prevErrorR;
+
+    double derivativeL = errorL - prevErrorL;
+    double derivativeR = errorR - prevErrorR;
 
     prevErrorL = errorL;
     prevErrorR = errorR;
     
-    motorOutputL = Kp * errorL + KD * derivativeL + KI * integralL;
-    motorOutputR = Kp * errorR + KD * derivativeR + KI * integralR;
+    motorOutputL = Kp * errorL        + KD * derivativeL + KI * integralL;
+    motorOutputR = Kp * errorR * 1.13 + KD * derivativeR + KI * integralR;
 
     // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-    motorOutputL = constrain(motorOutputL, 20, 150);
-    motorOutputR = constrain(motorOutputR, 20, 150);
+    motorOutputL = constrain(motorOutputL, 20, 255);
+    motorOutputR = constrain(motorOutputR, 20, 255);
     driveForward(motorOutputL,motorOutputR);
   
   }
-  delay(100);
-  driveStop();
+  motorOutputL = 0;
+  motorOutputR = 0;
+  driveForward(motorOutputL,motorOutputR);
 }
-
 
 void goToTargetCell() {
   if (targetRelativeDirection == north) {
   } else if (targetRelativeDirection == west) {
-    Serial.print("turn Left");
-    setColor(255,0,0);
     turnLeft();
   } else if (targetRelativeDirection == south) {
-    Serial.println("turn South");
-    turnRight();
-    turnRight();
+    turnLeft();
+    turnLeft();
   } else if (targetRelativeDirection == east) {
-    Serial.println("turn Right");
-    setColor(0,0,255);
     turnRight();
   }
-  Serial.print("---------------------------forward-----------------------------");
   runPID2();
   updateDirection(&leftDir, updateDirectionTurnAmount[targetRelativeDirection]);
   updateDirection(&currentDir, updateDirectionTurnAmount[targetRelativeDirection]);
@@ -629,16 +612,10 @@ void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16
   delayMicroseconds(100);
   distR = analogRead(IR_Trans_Right);
   digitalWrite(IR_Emit_Right, LOW);
-  
+
   distLeft = pow(distL,4)*-1.7647e-12+pow(distL,3)*1.4833e-08+pow(distL,2)*-3.3084e-05+distL*0.0320+9.4376;
   distFront = pow(distF,3)*5.9835e-09+pow(distF,2)*-2.0427e-05+distF*0.0306+13.6494;
   distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184;
-  
-  /*
-  distLeft = distL;
-  distRight = distR;
-  distFront = distF;
-  */
 }
 
 void cntRPM_L()
@@ -651,53 +628,36 @@ void cntRPM_R()
   i_R++;
 }
 
-void testIR() {
-  readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-  Serial.print("distLeft");
-  Serial.print(distLeft);
-  Serial.print(",");
-  Serial.print("distFront");
-  Serial.print(distFront);
-  Serial.print(",");
-  Serial.print("distRight");
-  Serial.print(distRight);
-  Serial.print(",");
-  Serial.print("distFront");
-  Serial.print(distFront);
-  Serial.println(",");
-  delay(1000);
-}
-
 void updateWalls() {
-   readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-  Serial.print("distLeft");
-  Serial.print(distLeft);
-  Serial.println(",");
+  Serial.println("distLeft");
+  Serial.println(distLeft);
+  Serial.println("distFront");
+  Serial.println(distFront);
+  Serial.println("distRight");
+  Serial.println(distRight);
   Serial.print("distFront");
-  Serial.print(distFront);
-  Serial.println(",");
-  Serial.print("distRight");
-  Serial.print(distRight);
-  Serial.println(",");
-  Serial.print("distFront");
-  Serial.print(distFront);
-  Serial.println(",");
-  if (distLeft < 60) {
+  
+
+  readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
+  if (distLeft < 55) {
     markWall(currentCell, leftDir);
+    log("Wall left");
     Serial.println(distLeft);
     if (isNeighbourValid(currentCell, leftDir)) {
       markWall(getNeighbourLocation(currentCell, leftDir), (leftDir + 2) % 4);
     }
   }
-  if (distFront < 80) {
+  if (distFront < 55) {
     markWall(currentCell, currentDir);
+    log("Wall front");
     Serial.println(distFront);
     if (isNeighbourValid(currentCell, currentDir)) {
       markWall(getNeighbourLocation(currentCell, currentDir), (currentDir + 2) % 4);
     }
   }
-  if (distRight < 50) {
+  if (distRight < 55) {
     markWall(currentCell, rightDir);
+    log("Wall right");
     Serial.println(distRight);
     if (isNeighbourValid(currentCell, rightDir)) {
       markWall(getNeighbourLocation(currentCell, rightDir), (rightDir + 2) % 4);
@@ -1001,138 +961,64 @@ void kinematics()
 
 }
 
-void turnRight() {
-
-  Serial.print("---------------------------Right------------------------");
-  int64_t oldPositionL = i_L;
-  int64_t oldPositionR = i_R;
-  int stepsR = 60;
-  int16_t targetPosR = (int) oldPositionL + stepsR;
-  double integralLR = 0, integralRR = 0;
-  double newPositionLRight, newPositionRRight;
-
-  while (newPositionLRight < targetPosR)
-  {
-   
-    newPositionLRight = int(i_L);
-    newPositionRRight = int(i_R);
-
-    
-    kinematics();
-    /*
-    Serial.print("newPositionL");
-    Serial.print(newPositionLRight);
-    Serial.println(",");
-    Serial.print("targetPos");
-    Serial.print(targetPosR);
-    Serial.println(",");
-    */
-    double setSpeedLeftTurn = setSpeedLeft0;
-    //double setSpeedRightTurn = setSpeedRight0;
-
-    double errorLR = setSpeedLeftTurn - (currentSpeedLeft);
-    //double errorR = setSpeedRightTurn - abs(currentSpeedRight);
-    /*
-    Serial.print("currentSpeedLeft");
-    Serial.print(currentSpeedLeft);
-    Serial.println(",");
-    */
-
-    integralLR += errorLR;
-    //integralR += errorR;
-
-    double derivativeLR = errorLR - prevErrorLR;
-    //double derivativeR = errorR - prevErrorR;
-
-    prevErrorLR = errorLR;
-    //prevErrorR = errorR;
-    
-    motorOutputL = Kp * errorLR        + KD * derivativeLR + KI * integralLR;
-    //motorOutputR = Kp * errorR * 1.13 + KD * derivativeR + KI * integralR;
-
-    // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-    motorOutputL = constrain(motorOutputL, 40, 100);
-    //motorOutputR = constrain(motorOutputR, 40, 100);
-
-    rotateRight(40,40);
-  
-  }
-  delay(100);
-  noInterrupts();
-  rotateRight(0,0);
-  interrupts();
-}
-
 void turnLeft() {
 
-  Serial.println("---------------------------Left------------------------");
+}
+
+void turnRight() {
   
-  int64_t oldPositionL2 = i_L;
-  int64_t oldPositionR2 = i_R;
-  
-  int64_t stepsL = 60;
-  int64_t targetPosL = oldPositionR2 + stepsL;
-  double integralLL = 0, integralRL = 0;
-  int64_t newPositionLLeft = (i_L);
-  int64_t newPositionRLeft = (i_R);
+  Serial.print("---------------------------rotate Right------------------------");
+  int64_t newPositionL = i_L;
+  int64_t newPositionR = i_R;
+  double steps = 100;
+  double targetPos = newPositionL + steps;
+  double integralL, integralR;
   //double targetPos = oldPosition + steps;
-  driveForward(0,0);
 
-  while (newPositionRLeft < targetPosL)
+  while (newPositionL < targetPos)
   {
-    
-    newPositionLLeft = (i_L);
-    newPositionRLeft = (i_R);
-   
-
+    int64_t newPositionL = i_L;
+    int64_t newPositionR = i_R;
     kinematics();
-    
-    Serial.print("newPositionRLeft");
-    Serial.print(newPositionRLeft);
+    Serial.print("newPositionL");
+    Serial.print(newPositionL);
     Serial.print(",");
-    Serial.print("targetPosL");
-    Serial.print(targetPosL);
+   
+    Serial.print("newPosition");
+    Serial.print(newPosition);
     Serial.println(",");
     
-    //double setSpeedLeft1L = setSpeedLeft0;
-    double setSpeedRight1L = setSpeedRight0;
+    double setSpeedLeft1 = setSpeedLeft0;
+    double setSpeedRight1 = setSpeedRight0;
 
-    //double errorLL = setSpeedLeft1 - abs(currentSpeedLeft);
-    double errorRL = setSpeedRight1L - (currentSpeedRight);
-    /*
-    Serial.print("currentSpeedLeft:");
-    Serial.print(currentSpeedLeft);
-    Serial.print(",");
-    Serial.print("currentSpeedRight:");
-    Serial.print(currentSpeedRight);
-    Serial.println(",");
-    */
-    //integralLL += errorLL;
-    integralRL += errorRL;
+    double errorL = setSpeedLeft1 - currentSpeedLeft;
+    double errorR = setSpeedRight1 - currentSpeedRight;
 
-    //double derivativeLL = errorLL - prevErrorLL;
-    double derivativeRL = errorRL - prevErrorRL;
+    integralL += errorL;
+    integralR += errorR;
 
-    //prevErrorLL = errorLL;
-    prevErrorRL = errorRL;
+    double derivativeL = errorL - prevErrorL;
+    double derivativeR = errorR - prevErrorR;
+
+    prevErrorL = errorL;
+    prevErrorR = errorR;
     
-    //motorOutputL = Kp * errorL        + KD * derivativeL + KI * integralL;
-    motorOutputR = Kp * errorRL * 1.13 + KD * derivativeRL + KI * integralRL;
+    motorOutputL = Kp * errorL        + KD * derivativeL + KI * integralL;
+    motorOutputR = Kp * errorR * 1.13 + KD * derivativeR + KI * integralR;
 
     // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-    //motorOutputL = constrain(motorOutputL, 40, 100);
-    motorOutputR = constrain(motorOutputR, 40, 100);
-    rotateLeft(40,40);
+    motorOutputL = constrain(motorOutputL, 20, 100);
+    motorOutputR = constrain(motorOutputR, 20, 100);
+    rotateRight(motorOutputL,motorOutputR);
   
   }
-  delay(100);
-  noInterrupts();
-  rotateLeft(0,0);
-  interrupts();
-  Serial.println("---------------------------Left end------------------------");
+  motorOutputL = 0;
+  motorOutputR = 0;
+  rotateRight(motorOutputL,motorOutputR);
+  
 }
- 
-void rotateLeft(double vel1, double vel2)
+
+void rotateRight(double vel1, double vel2)
 {
   Serial.print("---------------------------rotate Right------------------------");
   analogWrite(motorL_in1, 0);
@@ -1141,22 +1027,9 @@ void rotateLeft(double vel1, double vel2)
   analogWrite(motorR_in2, 0);
   delayMicroseconds(200);
   analogWrite(motorR_in1, vel2);
-}
 
-void rotateRight(double vel1, double vel2)
-{
-  analogWrite(motorL_in2, 0);
-  delayMicroseconds(200);
-  analogWrite(motorL_in1, vel1);
-  analogWrite(motorR_in1, 0);
-  delayMicroseconds(200);
-  analogWrite(motorR_in2, vel2);
-}
-
-void driveStop()
-{
-  analogWrite(motorL_in1, 0);
-  analogWrite(motorL_in2, 0);
-  analogWrite(motorR_in1, 0);
-  analogWrite(motorR_in2, 0);
+  if(orientation >= orientation00 + 90)
+  { 
+    turnright = true;
+  }
 }
