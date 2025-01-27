@@ -65,9 +65,9 @@
 #define diagonalRightSenson 3
 #define rightSensor 6
 
-#define Kp 250 // 250
-#define KI 0 //20
-#define KD 0 // 15 
+#define Kp 250// 250
+#define KI 10 //20
+#define KD 15// 15 
 
 // Define the LED strip configuration
 #define LED_PIN    13  // Pin connected to the data input of the LED strip
@@ -229,15 +229,15 @@ double orientation, orientation00, coordinateX, coordinateY;
 // Initialize the PID controller
 
 
-double prevErrorL;
-double prevErrorR;
-double prevErrorLL;
-double prevErrorRL;
-double prevErrorLR;
-double prevErrorRR;
-double integralL, integralR;
+double prevErrorL = 0;
+double prevErrorR = 0;
+double prevErrorLL = 0;
+double prevErrorRL = 0;
+double prevErrorLR = 0;
+double prevErrorRR = 0;
+double integralL = 0, integralR= 0;
 double setSpeedLeft1, setSpeedRight1;
-double errorL, errorR, derivativeL, derivativeR;
+double errorL = 0, errorR = 0, derivativeL = 0, derivativeR = 0;
 
 byte nextCellx, nextCelly;
 
@@ -441,10 +441,10 @@ void setColor(uint8_t r, uint8_t g, uint8_t b)
 void driveForward(int velL, int velR)
 {
     analogWrite(motorL_in2, 0);
-    delayMicroseconds(200);
+    delayMicroseconds(100);
     analogWrite(motorL_in1, velL);
     analogWrite(motorR_in2, 0);
-    delayMicroseconds(200);
+    delayMicroseconds(100);
     analogWrite(motorR_in1, velR);
 }
 
@@ -528,60 +528,60 @@ void runPID2(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 24)
+  while ((newPosition < targetPosPID) && distFront > 27)
   {
-    int64_t newPositionL = i_L;
-    int64_t newPositionR = i_R;
-    readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-    kinematics();
-   
-    newPosition = ((double) newPositionL+(double)newPositionR)/2;
-  
-    //targetPos = newPos steps;
-    wallError = 0.0002 * (distLeft  - distRight);
     
-    if (distLeft > 60) {
-      setColor(100,0,0);
-      wallError = 0.0002 * ((20) - distRight);
-    }
-    if (distRight > 55) {
-      wallError = 0.0002 * ((distLeft) - 20);
-      setColor(100,0,0);
-    }
+      int64_t newPositionL = i_L;
+      int64_t newPositionR = i_R;
+      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
+      kinematics();
     
-    setSpeedLeft1 = setSpeedLeft0 *1.03 - wallError;
-    setSpeedRight1 = setSpeedRight0 + wallError;
-
-      if (abs(targetPosPID-newPosition) < 150) {
-        if (setSpeedLeft1 > 0.05) {
-          setSpeedLeft1 = setSpeedLeft1 - 0.0;
-          setSpeedRight1 = setSpeedRight1 -0.0;
-      } 
-      else if (setSpeedLeft1 < 0.2) {
-          setSpeedLeft1 = setSpeedLeft1 + 0.0;
-          setSpeedRight1 = setSpeedRight1 + 0.0;  
+      newPosition = ((double) newPositionL+(double)newPositionR)/2;
+    
+      //targetPos = newPos steps;
+      wallError = 0.0002 * (distLeft - distRight);
+      
+      if (distLeft > 60) {
+        setColor(100,0,0);
+        wallError = 0.0002 * ((25) - distRight);
       }
-    }
-    errorL = setSpeedLeft1- currentSpeedLeft;
-    errorR = setSpeedRight1- currentSpeedRight;
+      if (distRight > 55) {
+        wallError = 0.0002 * ((distLeft) - 25);
+        setColor(100,0,0);
+      }
+      
+      setSpeedLeft1 = setSpeedLeft0 - wallError;
+      setSpeedRight1 = setSpeedRight0 + wallError;
 
-    integralL += errorL;
-    integralR += errorR;
-    
-    derivativeL = errorL - prevErrorL;
-    derivativeR = errorR - prevErrorR;
+        if (abs(targetPosPID-newPosition) < 150) {
+          if (setSpeedLeft1 > 0.05) {
+            setSpeedLeft1 = setSpeedLeft1 - 0.01;
+            setSpeedRight1 = setSpeedRight1 -0.01;
+        } 
+        else if (setSpeedLeft1 < 0.2) {
+            setSpeedLeft1 = setSpeedLeft1 + 0.0;
+            setSpeedRight1 = setSpeedRight1 + 0.0;  
+        }
+      
+      }
+      errorL = setSpeedLeft1- currentSpeedLeft;
+      errorR = setSpeedRight1- currentSpeedRight;
 
-    prevErrorL = errorL;
-    prevErrorR = errorR;
-    
-    motorOutputL = Kp * errorL  + KD * derivativeL + KI * integralL;
-    motorOutputR = Kp * errorR + KD * derivativeR + KI * integralR;
+      integralL += errorL;
+      integralR += errorR;
+      
+      derivativeL = errorL - prevErrorL;
+      derivativeR = errorR - prevErrorR;
 
-    // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-    motorOutputL = constrain(motorOutputL, 20, 150);
-    motorOutputR = constrain(motorOutputR, 20, 150);
-    driveForward(motorOutputL,motorOutputR);
-  
+      prevErrorL = errorL;
+      prevErrorR = errorR;
+      
+      motorOutputL = Kp * errorL  + KD * derivativeL + KI * integralL;
+      motorOutputR = Kp * errorR + KD * derivativeR + KI * integralR;
+      // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
+      motorOutputL = constrain(motorOutputL, 40, 150);
+      motorOutputR = constrain(motorOutputR, 40, 150);
+      driveForward(motorOutputL,motorOutputR);  
   }
   delay(20);
   driveStop();
@@ -598,7 +598,7 @@ void runPID3(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 24)
+  while ((newPosition < targetPosPID) && distFront > 27)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -661,7 +661,7 @@ void runPID1() {
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while (distFront > 24)
+  while (distFront > 30)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -674,10 +674,10 @@ void runPID1() {
     wallError = 0.0004 * (distLeft  - distRight);
     
     if (distLeft > 60) {
-      wallError = 0.0004 * ((20) - distRight);
+      wallError = 0.0004 * ((25) - distRight);
     }
      else if (distRight > 55) {
-      wallError = 0.0004 * ((distLeft) - 20);
+      wallError = 0.0004 * ((distLeft) - 25);
     }
     
     setSpeedLeft1 = setSpeedLeft0 - wallError;
@@ -729,6 +729,7 @@ void goToTargetCell() {
     runPID1();
     setColor(100,100,0);
     turnRight();
+    delay(1000);
     turnRight();
   } else if (targetRelativeDirection == east) {
     runPID1();
@@ -772,7 +773,7 @@ void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16
   
   distLeft = pow(distL,4)*-1.7647e-12+pow(distL,3)*1.4833e-08+pow(distL,2)*-3.3084e-05+distL*0.0320+9.4376;
   distFront = pow(distF,3)*5.9835e-09+pow(distF,2)*-2.0427e-05+distF*0.0306+13.6494;
-  distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184;
+  distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184+6;
 
   if (distL <130) {
     distLeft = pow(distL,2)*-7.5504e-04+distL*0.2449-4.0505;
@@ -1151,7 +1152,7 @@ void turnRight() {
 
   int64_t oldPositionL = i_L;
   int64_t oldPositionR = i_R;
-  int stepsR = 55;
+  int stepsR = 85;
   int16_t targetPosR = (int) oldPositionL + stepsR;
   double integralLR = 0, integralRR = 0;
   double newPositionLRight, newPositionRRight;
@@ -1199,7 +1200,7 @@ void turnRight() {
     motorOutputL = constrain(motorOutputL, 40, 100);
     //motorOutputR = constrain(motorOutputR, 40, 100);
     */
-    rotateRight(38,38);
+    rotateRight(37,37);
   
   }
   delay(100);
@@ -1213,7 +1214,7 @@ void turnLeft() {
   int64_t oldPositionL2 = i_L;
   int64_t oldPositionR2 = i_R;
   
-  int64_t stepsL = 55;
+  int64_t stepsL = 85;
   int64_t targetPosL = oldPositionR2 + stepsL;
   double integralLL = 0, integralRL = 0;
   int64_t newPositionLLeft = (i_L);
@@ -1265,7 +1266,7 @@ void turnLeft() {
     // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
     //motorOutputL = constrain(motorOutputL, 40, 100);
     motorOutputR = constrain(motorOutputR, 40, 100);
-    rotateLeft(38,38);  
+    rotateLeft(37,37);  
   }
   delay(100);
   driveStop();
