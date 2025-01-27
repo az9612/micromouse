@@ -65,9 +65,9 @@
 #define diagonalRightSenson 3
 #define rightSensor 6
 
-#define Kp 600// 250
-#define KI 20 //20
-#define KD 10// 15 
+#define Kp 250 // 250
+#define KI 0 //20
+#define KD 0 // 15 
 
 // Define the LED strip configuration
 #define LED_PIN    13  // Pin connected to the data input of the LED strip
@@ -213,8 +213,8 @@ double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
 double motorOutputL, motorOutputR;
 double setSpeedLeft, setSpeedRight;
-double setSpeedLeft0 = 0.3;
-double setSpeedRight0 = 0.3;
+double setSpeedLeft0 = 0.17;
+double setSpeedRight0 = 0.17;
 double newPosition;
 
 double setSpeed;
@@ -229,15 +229,15 @@ double orientation, orientation00, coordinateX, coordinateY;
 // Initialize the PID controller
 
 
-double prevErrorL = 0;
-double prevErrorR = 0;
-double prevErrorLL = 0;
-double prevErrorRL = 0;
-double prevErrorLR = 0;
-double prevErrorRR = 0;
-double integralL = 0, integralR= 0;
+double prevErrorL;
+double prevErrorR;
+double prevErrorLL;
+double prevErrorRL;
+double prevErrorLR;
+double prevErrorRR;
+double integralL, integralR;
 double setSpeedLeft1, setSpeedRight1;
-double errorL = 0, errorR = 0, derivativeL = 0, derivativeR = 0;
+double errorL, errorR, derivativeL, derivativeR;
 
 byte nextCellx, nextCelly;
 
@@ -291,6 +291,7 @@ void setup() {
   resetMazeValuesInEEPROM();
   initializeFloodArray2();
   resetMazeValuesInEEPROM2();
+  IMU_setup();
 }
   
 
@@ -299,7 +300,6 @@ testIR();
 setColor(0,100,0); // 
   if(blinker)
   {
-   
     unsigned long current_Time = millis();
     if (current_Time >= blinker_Time + 5000)
     {
@@ -442,10 +442,10 @@ void setColor(uint8_t r, uint8_t g, uint8_t b)
 void driveForward(int velL, int velR)
 {
     analogWrite(motorL_in2, 0);
-    delayMicroseconds(100);
+    delayMicroseconds(200);
     analogWrite(motorL_in1, velL);
     analogWrite(motorR_in2, 0);
-    delayMicroseconds(100);
+    delayMicroseconds(200);
     analogWrite(motorR_in1, velR);
 }
 
@@ -529,107 +529,67 @@ void runPID2(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 40)
+  while ((newPosition < targetPosPID) && distFront > 24)
   {
+    int64_t newPositionL = i_L;
+    int64_t newPositionR = i_R;
+    readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
+    kinematics();
+   
+    newPosition = ((double) newPositionL+(double)newPositionR)/2;
+  
+    //targetPos = newPos steps;
+    wallError = 0.0002 * (distLeft  - distRight);
     
-      int64_t newPositionL = i_L;
-      int64_t newPositionR = i_R;
-      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-      kinematics();
+    if (distLeft > 60) {
+      setColor(100,0,0);
+      wallError = 0.0002 * ((20) - distRight);
+    }
+    if (distRight > 55) {
+      wallError = 0.0002 * ((distLeft) - 20);
+      setColor(100,0,0);
+    }
     
-      newPosition = ((double) newPositionL+(double)newPositionR)/2;
-    
-      //targetPos = newPos steps;
-      wallError = 0.00008 * (distLeft - distRight);
-      
-      if (distLeft > 60) {
-        setColor(100,0,0);
-        wallError = 0.00008 * ((25) - distRight);
-      }
-      if (distRight > 55) {
-        wallError = 0.00008 * ((distLeft) - 25);
-        setColor(100,0,0);
-      }
-      
-      setSpeedLeft1 = setSpeedLeft0 - wallError;
-      setSpeedRight1 = setSpeedRight0 + wallError;
-/*
-        if (abs(targetPosPID-newPosition) < 150) {
-          if (setSpeedLeft1 > 0.05) {
-            setSpeedLeft1 = setSpeedLeft1 - 0.04;
-            setSpeedRight1 = setSpeedRight1 -0.04;
-        } 
-        else if (setSpeedLeft1 < 0.2) {
-            setSpeedLeft1 = setSpeedLeft1 + 0.0;
-            setSpeedRight1 = setSpeedRight1 + 0.0;  
-        }
-        }
-        */
-      errorL = setSpeedLeft1- currentSpeedLeft;
-      errorR = setSpeedRight1- currentSpeedRight;
+    setSpeedLeft1 = setSpeedLeft0 *1.03 - wallError;
+    setSpeedRight1 = setSpeedRight0 + wallError;
 
-      integralL += errorL;
-      integralR += errorR;
-      
-      derivativeL = errorL - prevErrorL;
-      derivativeR = errorR - prevErrorR;
+      if (abs(targetPosPID-newPosition) < 150) {
+        if (setSpeedLeft1 > 0.05) {
+          setSpeedLeft1 = setSpeedLeft1 - 0.0;
+          setSpeedRight1 = setSpeedRight1 -0.0;
+      } 
+      else if (setSpeedLeft1 < 0.2) {
+          setSpeedLeft1 = setSpeedLeft1 + 0.0;
+          setSpeedRight1 = setSpeedRight1 + 0.0;  
+      }
+    }
+    errorL = setSpeedLeft1- currentSpeedLeft;
+    errorR = setSpeedRight1- currentSpeedRight;
 
-      prevErrorL = errorL;
-      prevErrorR = errorR;
-      
-      motorOutputL = Kp * errorL  + KD * derivativeL + KI * integralL;
-      motorOutputR = Kp * errorR * 1.13 + KD * derivativeR + KI * integralR;
-      // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-      motorOutputL = constrain(motorOutputL, 20, 255);
-      motorOutputR = constrain(motorOutputR, 20, 255);
-      driveForward(motorOutputL,motorOutputR);  
+    integralL += errorL;
+    integralR += errorR;
+    
+    derivativeL = errorL - prevErrorL;
+    derivativeR = errorR - prevErrorR;
+
+    prevErrorL = errorL;
+    prevErrorR = errorR;
+    
+    motorOutputL = Kp * errorL  + KD * derivativeL + KI * integralL;
+    motorOutputR = Kp * errorR + KD * derivativeR + KI * integralR;
+
+    // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
+    motorOutputL = constrain(motorOutputL, 20, 150);
+    motorOutputR = constrain(motorOutputR, 20, 150);
+    driveForward(motorOutputL,motorOutputR);
+  
   }
-  delay(20);
+  delayMicroseconds(20);
   driveStop();
+  delayMicroseconds(1000);
 }
  
 
-void Festwerte(){
-  int64_t newPositionL = i_L;
-  int64_t newPositionR = i_R;
-  newPosition = ((double) newPositionL+(double)newPositionR)/2;
-  double stepsPID = 225;
-  double targetPosPID = newPosition + stepsPID;
-  //double targetPos = oldPosition + steps;
-  double setSpeedL = 50, setSpeedR = 50;
-  double setSpeed = 50;
-  while ((newPosition < targetPosPID) && distFront > 40)
-  {
-    
-      int64_t newPositionL = i_L;
-      int64_t newPositionR = i_R;
-      readIR(distLeft, distFrontLeft, distFront, distFrontRight, distRight);
-      kinematics();
-    
-      newPosition = ((double) newPositionL+(double)newPositionR)/2;
-      setColor(0,255,255);
-      if(distLeft<20)
-      {
-        setSpeedR = setSpeedR -10; 
-      }
-      else setSpeedR = setSpeed;
-
-     if(distRight<20)
-      {
-        setSpeedL = setSpeedL - 10;
-      }
-      else setSpeedL = setSpeed;
-      Serial.print("setSpeedL");
-      Serial.print(setSpeedL);
-        Serial.print("setSpeedR");
-      Serial.print(setSpeedR);
-      setSpeedL = constrain(motorOutputL, 40, 255);
-      setSpeedR = constrain(motorOutputR, 40, 255);
-      driveForward(setSpeedL,setSpeedR);  
-  }
-  delay(20);
-  driveStop();
-}
  
 void runPID3(){
   int64_t newPositionL = i_L;
@@ -639,7 +599,7 @@ void runPID3(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 27)
+  while ((newPosition < targetPosPID) && distFront > 24)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -690,7 +650,7 @@ void runPID3(){
     driveForward(motorOutputL,motorOutputR);
   
   }
-  delay(20);
+  delayMicroseconds(20);
   driveStop();
 }
 
@@ -702,7 +662,7 @@ void runPID1() {
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while (distFront > 35)
+  while (distFront > 24)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -715,10 +675,10 @@ void runPID1() {
     wallError = 0.0004 * (distLeft  - distRight);
     
     if (distLeft > 60) {
-      wallError = 0.0004 * ((25) - distRight);
+      wallError = 0.0004 * ((20) - distRight);
     }
      else if (distRight > 55) {
-      wallError = 0.0004 * ((distLeft) - 25);
+      wallError = 0.0004 * ((distLeft) - 20);
     }
     
     setSpeedLeft1 = setSpeedLeft0 - wallError;
@@ -766,20 +726,17 @@ void goToTargetCell() {
     runPID1();
     setColor(0,100,100); // 
     turnLeft();
-    delay(1000);
   } else if (targetRelativeDirection == south) {
     runPID1();
     setColor(100,100,0);
     turnRight();
-    delay(1000);
     turnRight();
   } else if (targetRelativeDirection == east) {
     runPID1();
     setColor(100,0,100);
     turnRight();
-    delay(1000);
   }
-  Festwerte();
+  runPID2();
   updateDirection(&leftDir, updateDirectionTurnAmount[targetRelativeDirection]);
   updateDirection(&currentDir, updateDirectionTurnAmount[targetRelativeDirection]);
   updateDirection(&rightDir, updateDirectionTurnAmount[targetRelativeDirection]);
@@ -1193,23 +1150,25 @@ void kinematics()
 
 void turnRight() {
 
-  driveStop();
-  delay(100);
   int64_t oldPositionL = i_L;
   int64_t oldPositionR = i_R;
-  int stepsR = 60;
+  int stepsR = 55;
   int16_t targetPosR = (int) oldPositionL + stepsR;
   double integralLR = 0, integralRR = 0;
   double newPositionLRight, newPositionRRight;
 
-  while (newPositionLRight < targetPosR)
+  //while (newPositionLRight < targetPosR)
+  while(theta_gyr < 90)
   {
    
     newPositionLRight = int(i_L);
     newPositionRRight = int(i_R);
-
     
+    Serial.print("theta_gyr");
+    Serial.print(theta_gyr);
+    Serial.print(",");
     kinematics();
+    readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ);
     /*
     Serial.print("newPositionL");
     Serial.print(newPositionLRight);
@@ -1245,30 +1204,31 @@ void turnRight() {
     motorOutputL = constrain(motorOutputL, 40, 100);
     //motorOutputR = constrain(motorOutputR, 40, 100);
     */
-    rotateRight(40,40);
+    rotateRight(38,38);
   
   }
-  delay(100);
+  delayMicroseconds(100);
   driveStop();
 }
 
 void turnLeft() {
 
-  driveStop();
-  delay(100);
   Serial.println("---------------------------Left------------------------");
   
   int64_t oldPositionL2 = i_L;
   int64_t oldPositionR2 = i_R;
   
-  int64_t stepsL = 60;
+  int64_t stepsL = 55;
   int64_t targetPosL = oldPositionR2 + stepsL;
   double integralLL = 0, integralRL = 0;
   int64_t newPositionLLeft = (i_L);
   int64_t newPositionRLeft = (i_R);
   //double targetPos = oldPosition + steps;
+  driveForward(0,0);
+  theta_gyr = 0.0;
+  //while (newPositionRLeft < targetPosL)
 
-  while (newPositionRLeft < targetPosL)
+  while(theta_gyr<-90)
   {
     
     newPositionLLeft = (i_L);
@@ -1276,6 +1236,7 @@ void turnLeft() {
    
 
     kinematics();
+    readIMU(accX, accY, accZ, gyrX, gyrY, gyrZ, magX, magY, magZ); 
     /*
     Serial.print("newPositionRLeft");
     Serial.print(newPositionRLeft);
@@ -1310,15 +1271,54 @@ void turnLeft() {
     motorOutputR = Kp * errorRL * 1.13 + KD * derivativeRL + KI * integralRL;
     */
     // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
-    //motorOutputL = constrain(motorOutputL, 40, 100);
+    motorOutputL = constrain(motorOutputL, 40, 100);
     motorOutputR = constrain(motorOutputR, 40, 100);
-    rotateLeft(40,40);  
+    rotateLeft(motorOutputL, motorOutputR);  
   }
-  delay(100);
+  delayMicroseconds(100);
   driveStop();
 
 }
  
+void readIMU(double& x_acc, double& y_acc, double& z_acc, double& x_gyr, double& y_gyr, double& z_gyr, double& x_mag, double& y_mag, double& z_mag)
+{
+  double timer = kinematics_sampleTime/1000;
+  if(myICM.dataReady())
+  {
+    myICM.getAGMT();                // The values are only updated when you call 'getAGMT'
+   
+    x_acc = myICM.accX();
+    y_acc = myICM.accY();
+    z_acc = myICM.accZ();
+  
+    x_gyr = myICM.gyrX();
+    y_gyr = myICM.gyrY();
+    z_gyr = myICM.gyrZ();
+    
+    x_mag = myICM.magX();
+    y_mag = myICM.magY();
+    z_mag = myICM.magZ();
+    
+    theta_gyr += timer*gyrZ;
+    // theta_gyr = timer*gyrZ;
+    orientation = complemantaryFilter(0.05, orientation, theta, theta_gyr);
+    orientation += complemantaryFilter(0.05, orientation, theta, theta_gyr);
+    
+    sx += x_acc * cos(orientation) * pow(timer, 2) + velX * timer;
+    sy += x_acc * sin(orientation) * pow(timer, 2) + velY * timer; 
+    // sx = x_acc * cos(orientation) * pow(timer, 2) + velX * timer;
+    // sy = x_acc * sin(orientation) * pow(timer, 2) + velY * timer; 
+    velX = x_acc * cos(orientation) * timer; 
+    velY = x_acc * sin(orientation) * timer;
+  }
+}
+double complemantaryFilter(double alpha, double value, double value1, double value2)
+{
+  value = alpha*(value + value1)+(1-alpha)*value2; // a(theta+theta_gyr) + (1-a)*theta_kine
+  return value;
+}
+
+
 void rotateLeft(double vel1, double vel2)
 {
   Serial.print("---------------------------rotate Right------------------------");
@@ -1342,8 +1342,129 @@ void rotateRight(double vel1, double vel2)
 
 void driveStop()
 {
-  analogWrite(motorL_in1, 0);
-  analogWrite(motorL_in2, 0);
-  analogWrite(motorR_in1, 0);
-  analogWrite(motorR_in2, 0);
+  analogWrite(motorL_in1, 255);
+  analogWrite(motorL_in2, 255);
+  analogWrite(motorR_in1, 255);
+  analogWrite(motorR_in2, 255);
+}
+
+
+
+void IMU_setup()
+{
+  Wire.begin();
+  Wire.setClock(400000);
+  bool initialized = false;
+  while (!initialized)
+  {
+
+    myICM.begin(Wire, 1);
+
+    Serial.print(F("Initialization of the sensor returned: "));
+    Serial.println(myICM.statusString());
+    if (myICM.status != ICM_20948_Stat_Ok)
+    {
+      Serial.println(F("Trying again..."));
+      delay(500);
+    }
+    else
+    {
+      initialized = true;
+    }
+  }
+  Serial.println(F("Device connected!"));
+
+  // Here we are doing a SW reset to make sure the device starts in a known state
+  myICM.swReset();
+  if (myICM.status != ICM_20948_Stat_Ok)
+  {
+    Serial.print(F("Software Reset returned: "));
+    Serial.println(myICM.statusString());
+  }
+  delay(250);
+
+  // Now wake the sensor up
+  myICM.sleep(false);
+  myICM.lowPower(false);
+
+  // The next few configuration functions accept a bit-mask of sensors for which the settings should be applied.
+
+  // Set Gyro and Accelerometer to a particular sample mode
+  // options: ICM_20948_Sample_Mode_Continuous
+  //          ICM_20948_Sample_Mode_Cycled
+  myICM.setSampleMode((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), ICM_20948_Sample_Mode_Continuous);
+  if (myICM.status != ICM_20948_Stat_Ok)
+  {
+    Serial.print(F("setSampleMode returned: "));
+    Serial.println(myICM.statusString());
+  }
+  
+  // Set full scale ranges for both acc and gyr
+  ICM_20948_fss_t myFSS; // This uses a "Full Scale Settings" structure that can contain values for all configurable sensors
+
+  myFSS.a = gpm2; // (ICM_20948_ACCEL_CONFIG_FS_SEL_e)
+                  // gpm2
+                  // gpm4
+                  // gpm8
+                  // gpm16
+
+  myFSS.g = dps500; // (ICM_20948_GYRO_CONFIG_1_FS_SEL_e)
+                    // dps250
+                    // dps500
+                    // dps1000
+                    // dps2000
+
+  myICM.setFullScale((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), myFSS);
+  if (myICM.status != ICM_20948_Stat_Ok)
+  {
+    Serial.print(F("setFullScale returned: "));
+    Serial.println(myICM.statusString());
+  }
+  // Set up Digital Low-Pass Filter configuration
+  ICM_20948_dlpcfg_t myDLPcfg;    // Similar to FSS, this uses a configuration structure for the desired sensors
+  myDLPcfg.a = acc_d473bw_n499bw; // (ICM_20948_ACCEL_CONFIG_DLPCFG_e)
+                                  // acc_d246bw_n265bw      - means 3db bandwidth is 246 hz and nyquist bandwidth is 265 hz
+                                  // acc_d111bw4_n136bw
+                                  // acc_d50bw4_n68bw8
+                                  // acc_d23bw9_n34bw4
+                                  // acc_d11bw5_n17bw
+                                  // acc_d5bw7_n8bw3        - means 3 db bandwidth is 5.7 hz and nyquist bandwidth is 8.3 hz
+                                  // acc_d473bw_n499bw
+
+  myDLPcfg.g = gyr_d361bw4_n376bw5; // (ICM_20948_GYRO_CONFIG_1_DLPCFG_e)
+                                    // gyr_d196bw6_n229bw8
+                                    // gyr_d151bw8_n187bw6
+                                    // gyr_d119bw5_n154bw3
+                                    // gyr_d51bw2_n73bw3
+                                    // gyr_d23bw9_n35bw9
+                                    // gyr_d11bw6_n17bw8
+                                    // gyr_d5bw7_n8bw9
+                                    // gyr_d361bw4_n376bw5
+
+  myICM.setDLPFcfg((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), myDLPcfg);
+  if (myICM.status != ICM_20948_Stat_Ok)
+  {
+    Serial.print(F("setDLPcfg returned: "));
+    Serial.println(myICM.statusString());
+  }
+
+  // Choose whether or not to use DLPF
+  // Here we're also showing another way to access the status values, and that it is OK to supply individual sensor masks to these functions
+  ICM_20948_Status_e accDLPEnableStat = myICM.enableDLPF(ICM_20948_Internal_Acc, false);
+  ICM_20948_Status_e gyrDLPEnableStat = myICM.enableDLPF(ICM_20948_Internal_Gyr, false);
+  Serial.print(F("Enable DLPF for Accelerometer returned: "));
+  Serial.println(myICM.statusString(accDLPEnableStat));
+  Serial.print(F("Enable DLPF for Gyroscope returned: "));
+  Serial.println(myICM.statusString(gyrDLPEnableStat));
+
+  // Choose whether or not to start the magnetometer
+  myICM.startupMagnetometer();
+  if (myICM.status != ICM_20948_Stat_Ok)
+  {
+    Serial.print(F("startupMagnetometer returned: "));
+    Serial.println(myICM.statusString());
+  }
+
+  Serial.println();
+  Serial.println(F("Configuration complete!"));
 }

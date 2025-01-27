@@ -492,7 +492,6 @@ void runPID2(){
   double targetPos =  steps;
   //double targetPos = oldPosition + steps;
 
-  if (newPosition < targetPos)
   {
    
     newPositionL = i_L;
@@ -542,9 +541,7 @@ void runPID2(){
     motorOutputL = constrain(motorOutputL, 20, 255);
     motorOutputR = constrain(motorOutputR, 20, 255);
   
-  } else {
-  motorOutputL = 0;
-  motorOutputR = 0;
+
   }
 }
 void updatePosition(bool wallRight, bool wallFront, bool wallLeft)
