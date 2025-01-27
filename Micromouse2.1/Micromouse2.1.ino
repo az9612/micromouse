@@ -13,6 +13,11 @@
 #include "src/CircularBufferQueue/CircularBufferQueue.h"
 #include <EEPROM.h>
 
+#include <ICM_20948.h>
+//#include <>
+#include <Adafruit_NeoPixel.h>
+#include <AutoPID.h>
+
 #define cs 5 
 
 #define I2C_ADDRESS 0x3C
@@ -60,6 +65,13 @@
 #define diagonalRightSenson 3
 #define rightSensor 6
 
+#define Kp 250 // 250
+#define KI 0 //20
+#define KD 0 // 15 
+
+// Define the LED strip configuration
+#define LED_PIN    13  // Pin connected to the data input of the LED strip
+#define NUM_LEDS   3 // Number of LEDs in the strip
 
 double t;
 String valueRow;
@@ -112,15 +124,6 @@ short change;
 byte* values[7] = { &startCell, &(targetCells[0]), &(targetCells[1]), &(targetCells[2]), &(targetCells[3]), &startDir, &resetMaze };
 
 // Motor Control
-
-#include <ICM_20948.h>
-//#include <>
-#include <Adafruit_NeoPixel.h>
-#include <AutoPID.h>
-
-// Define the LED strip configuration
-#define LED_PIN    13  // Pin connected to the data input of the LED strip
-#define NUM_LEDS   3 // Number of LEDs in the strip
 
 ICM_20948_I2C myICM;
 
@@ -210,8 +213,8 @@ double max_targetSpeed = 1.6;
 double targetSpeed = 0.6;
 double motorOutputL, motorOutputR;
 double setSpeedLeft, setSpeedRight;
-double setSpeedLeft0 = 0.2;
-double setSpeedRight0 = 0.2;
+double setSpeedLeft0 = 0.17;
+double setSpeedRight0 = 0.17;
 double newPosition;
 
 double setSpeed;
@@ -224,9 +227,7 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 
 // Initialize the PID controller
-#define Kp 250
-#define KI 0 //20
-#define KD 0
+
 
 double prevErrorL;
 double prevErrorR;
@@ -295,6 +296,8 @@ void setup() {
 
 void loop() {
 testIR();
+setColor(0,100,0); // 
+delay(100);
   if(blinker)
   {
     unsigned long current_Time = millis();
@@ -526,7 +529,7 @@ void runPID2(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 42)
+  while ((newPosition < targetPosPID) && distFront > 24)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -536,26 +539,30 @@ void runPID2(){
     newPosition = ((double) newPositionL+(double)newPositionR)/2;
   
     //targetPos = newPos steps;
-    wallError = 0.0001 * ((distLeft - 8) - distRight);
-    if ((distLeft > 60) || (distRight > 55)) {
-      wallError = 0;
+    wallError = 0.0002 * (distLeft  - distRight);
+    
+    if (distLeft > 60) {
+      wallError = 0.0002 * ((20) - distRight);
+    }
+     else if (distRight > 55) {
+      wallError = 0.0002 * ((distLeft) - 20);
     }
     
-    setSpeedLeft1 = setSpeedLeft0 * 1.05 - wallError;
+    setSpeedLeft1 = setSpeedLeft0 *1.03 - wallError;
     setSpeedRight1 = setSpeedRight0 + wallError;
 
       if (abs(targetPosPID-newPosition) < 150) {
         if (setSpeedLeft1 > 0.05) {
-          setSpeedLeft1 = setSpeedLeft1 - 0.04;
-          setSpeedRight1 = setSpeedRight1 -0.04;
+          setSpeedLeft1 = setSpeedLeft1 - 0.0;
+          setSpeedRight1 = setSpeedRight1 -0.0;
       } 
       else if (setSpeedLeft1 < 0.2) {
           setSpeedLeft1 = setSpeedLeft1 + 0.0;
           setSpeedRight1 = setSpeedRight1 + 0.0;  
       }
     }
-    errorL = setSpeedLeft1 - currentSpeedLeft;
-    errorR = setSpeedRight1 - currentSpeedRight;
+    errorL = setSpeedLeft1- currentSpeedLeft;
+    errorR = setSpeedRight1- currentSpeedRight;
 
     integralL += errorL;
     integralR += errorR;
@@ -584,15 +591,19 @@ void goToTargetCell() {
   if (targetRelativeDirection == north) {
   } else if (targetRelativeDirection == west) {
     Serial.print("turn Left");
-    setColor(255,0,0);
+    setColor(0,100,100); // 
+    delay(100);
     turnLeft();
   } else if (targetRelativeDirection == south) {
     Serial.println("turn South");
+    setColor(100,100,0);
+    delay(100);
     turnRight();
     turnRight();
   } else if (targetRelativeDirection == east) {
     Serial.println("turn Right");
-    setColor(0,0,255);
+    setColor(100,0,100);
+    delay(100);
     turnRight();
   }
   Serial.print("---------------------------forward-----------------------------");
@@ -634,7 +645,13 @@ void readIR(double& distLeft, uint16_t& distFrontLeft, double& distFront, uint16
   distLeft = pow(distL,4)*-1.7647e-12+pow(distL,3)*1.4833e-08+pow(distL,2)*-3.3084e-05+distL*0.0320+9.4376;
   distFront = pow(distF,3)*5.9835e-09+pow(distF,2)*-2.0427e-05+distF*0.0306+13.6494;
   distRight = pow(distR,4)*2.1381e-12+pow(distR,3)*-1.3567e-08+pow(distR,2)*2.9813e-05+distR*-0.0195+13.1184;
-  
+
+  if (distL <130) {
+    distLeft = pow(distL,2)*-7.5504e-04+distL*0.2449-4.0505;
+  }
+  if (distR <230) {
+     distRight = distR*0.0388+1.29891;
+  }
   /*
   distLeft = distL;
   distRight = distR;

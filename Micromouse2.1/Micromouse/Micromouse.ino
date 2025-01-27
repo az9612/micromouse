@@ -410,7 +410,7 @@ void runPID(){
   if (distFront > 50) {
 
     
-    wallError = 0.0008 * (distLeft - distRight);
+    wallError = 0.001 * (distLeft - distRight);
     if (distLeft > 55 || distRight > 55) {
     wallError = 0;
     }
