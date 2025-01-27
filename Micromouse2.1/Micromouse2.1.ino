@@ -224,9 +224,9 @@ double orientation, orientation00, coordinateX, coordinateY;
 
 
 // Initialize the PID controller
-#define Kp 190
-#define KI 20
-#define KD 1
+#define Kp 250
+#define KI 0 //20
+#define KD 0
 
 double prevErrorL;
 double prevErrorR;
@@ -526,7 +526,7 @@ void runPID2(){
   double targetPosPID = newPosition + stepsPID;
   //double targetPos = oldPosition + steps;
 
-  while ((newPosition < targetPosPID) && distFront > 15)
+  while ((newPosition < targetPosPID) && distFront > 42)
   {
     int64_t newPositionL = i_L;
     int64_t newPositionR = i_R;
@@ -536,21 +536,22 @@ void runPID2(){
     newPosition = ((double) newPositionL+(double)newPositionR)/2;
   
     //targetPos = newPos steps;
-    wallError = 0.001 * ((distLeft -8) - distRight);
-    if ((distLeft > 70) || (distRight > 40)) {
+    wallError = 0.0001 * ((distLeft - 8) - distRight);
+    if ((distLeft > 60) || (distRight > 55)) {
       wallError = 0;
     }
     
-    setSpeedLeft1 = setSpeedLeft0 - wallError;
+    setSpeedLeft1 = setSpeedLeft0 * 1.05 - wallError;
     setSpeedRight1 = setSpeedRight0 + wallError;
 
-      if (abs(targetPosPID-newPosition) < 100) {
-        if (setSpeedLeft1 > 0.1) {
+      if (abs(targetPosPID-newPosition) < 150) {
+        if (setSpeedLeft1 > 0.05) {
           setSpeedLeft1 = setSpeedLeft1 - 0.04;
           setSpeedRight1 = setSpeedRight1 -0.04;
-      } else if (setSpeedLeft1 < 0.2) {
-          setSpeedLeft1 = setSpeedLeft1 + 0.01;
-          setSpeedRight1 = setSpeedRight1 + 0.01;  
+      } 
+      else if (setSpeedLeft1 < 0.2) {
+          setSpeedLeft1 = setSpeedLeft1 + 0.0;
+          setSpeedRight1 = setSpeedRight1 + 0.0;  
       }
     }
     errorL = setSpeedLeft1 - currentSpeedLeft;
@@ -565,7 +566,7 @@ void runPID2(){
     prevErrorL = errorL;
     prevErrorR = errorR;
     
-    motorOutputL = Kp * errorL + KD * derivativeL + KI * integralL;
+    motorOutputL = Kp * errorL  + KD * derivativeL + KI * integralL;
     motorOutputR = Kp * errorR + KD * derivativeR + KI * integralR;
 
     // Begrenzung der Ausgangswerte auf PWM-Bereich (0-255)
@@ -574,7 +575,7 @@ void runPID2(){
     driveForward(motorOutputL,motorOutputR);
   
   }
-  delay(100);
+  delay(20);
   driveStop();
 }
 
@@ -682,21 +683,21 @@ void updateWalls() {
   Serial.print("distFront");
   Serial.print(distFront);
   Serial.println(",");
-  if (distLeft < 60) {
+  if (distLeft < 60) {  //Schwellenwert 55
     markWall(currentCell, leftDir);
     Serial.println(distLeft);
     if (isNeighbourValid(currentCell, leftDir)) {
       markWall(getNeighbourLocation(currentCell, leftDir), (leftDir + 2) % 4);
     }
   }
-  if (distFront < 80) {
+  if (distFront < 100) { //Schwellwert 120
     markWall(currentCell, currentDir);
     Serial.println(distFront);
     if (isNeighbourValid(currentCell, currentDir)) {
       markWall(getNeighbourLocation(currentCell, currentDir), (currentDir + 2) % 4);
     }
   }
-  if (distRight < 50) {
+  if (distRight < 55) { //Schwellenwert 48
     markWall(currentCell, rightDir);
     Serial.println(distRight);
     if (isNeighbourValid(currentCell, rightDir)) {
